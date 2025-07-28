@@ -1,22 +1,65 @@
 import base64
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
+import json
 import streamlit as st
 from PyPDF2 import PdfReader, PdfWriter
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.chains import LLMChain
-from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate, PromptTemplate
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
 from langchain_community.vectorstores import FAISS
 import re
+from tinydb import TinyDB, Query
 
 embedding_model = "nomic-embed-text:v1.5"
 
-def store_pdf_as_vector_store(pdf_path, vs_path, book_title, timeline_arc, deconstructive_analysis):
+# The feminist extraction function uses an LLM to label text chunks with feminist themes programmatically.
+def extract_feminist_themes(book_title):
+
+    if book_title == "Sarah Maas - Assassins Blade":
+        multi_response_docs = prompt_db.search(Prompt.book_name == "Sarah Maas - Assassins Blade")
+        for fem_doc in multi_response_docs:
+            if "feminist_analysis" in fem_doc.keys():
+                print(f"fem_doc = {fem_doc}")
+                return fem_doc
+
+    elif book_title == "Sarah Maas - Throne of Glass":
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Throne of Glass")[0]
+
+    elif book_title == "Sarah Maas - Crown of Midnight":
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Crown of Midnight")[0]
+
+    elif book_title == "Sarah Maas - Heir of Fire":
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Heir of Fire")[0]
+
+    elif book_title == "Sarah Maas - Queen of Shadows":
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Queen of Shadows")[0]
+
+    elif book_title == "Sarah Maas - Empire of Storms":
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Empire of Storms")[0]
+
+    elif book_title == "Sarah Maas - Tower of Dawn":
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Tower of Dawn")[0]
+
+    elif book_title == "Sarah Maas - Kingdom of Ash":
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Kingdom of Ash")[0]
+
+
+def enrich_with_feminist_analysis(documents, fem_book_name):
+    fem_docs = []
+    for doc in documents:
+        fem_data = dict(extract_feminist_themes(fem_book_name))
+        if fem_data:
+            doc.metadata = dict(fem_data)  # convert only after checking
+            fem_docs.append(doc)
+
+    return fem_docs
+
+def store_pdf_as_vector_store(pdf_path, vs_path, book_title, timeline_arc, deconstructive_analysis, feminist_themes):
 
     if os.path.exists(vs_path):
         print(f"Vector store already exists at {vs_path}.")
@@ -41,10 +84,18 @@ def store_pdf_as_vector_store(pdf_path, vs_path, book_title, timeline_arc, decon
                 embeddings
             )
         elif deconstructive_analysis:
-            deconstruct_docs = enrich_with_deconstructive_analysis(documents, book_title)
+            deconstruct_docs = enrich_with_deconstructive_analysis(split_docs, book_title)
             # Create a vector store from the chunks
             vector_store = FAISS.from_documents(
                 deconstruct_docs,
+                embeddings
+            )
+        elif feminist_themes:
+            # Extract feminist themes from the chunks
+            feminist_docs = enrich_with_feminist_analysis(split_docs, book_title)
+            # Create a vector store from the chunks
+            vector_store = FAISS.from_documents(
+                feminist_docs,
                 embeddings
             )
         else:
@@ -59,105 +110,34 @@ def store_pdf_as_vector_store(pdf_path, vs_path, book_title, timeline_arc, decon
         print(f"Vector store created and saved at {vs_path}.")
         return vector_store
 
+Prompt = Query()
+prompt_db = TinyDB('prompt_logs.json')
+
+# The deconstructive analysis was done manually by passing a prompt to the LLM and fetching below results.
 def identify_deconstructed_metadata(book_title):
     if book_title == "Sarah Maas - Assassins Blade":
-        return {
-            "book_title": "Assassins Blade",
-            "chapter": "The Stranger in the Mist",
-            "type": "deconstruction",
-            "tags": ["identity", "contradiction", "binary", "ambiguity"],
-            "excerpt": "“Just like how you proper men surrounded a defenseless girl in an alley?”",
-                     "analysis_note": "This passage exposes a contradiction between the stranger's words and actions, subverting earlier meanings about her character. "
-                                      "The phrase 'proper men' is initially ambiguous, but Yrene's reaction suggests that it refers to those who would harm or exploit women. "
-                                      "However, the stranger herself wields two long daggers with dripping blood, blurring the binary opposition between victimizer and protector. "
-                                      "This ambiguity challenges the reader's expectations about her character, "
-                                      "as she simultaneously critiques the behavior of 'proper men' while also embodying a violent and potentially oppressive power dynamic." }
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Assassins Blade")[0]
 
     elif book_title == "Sarah Maas - Throne of Glass":
-        return { "book": "Throne of Glass",
-                 "type": "deconstruction",
-                 "tags": ["binary", "ambiguity", "identity"],
-                 "chapter": "Not specified",
-                 "excerpt": "\"That he's very attached to her. Possibly in love with her.\"",
-                 "analysis_note": "The passage exposes a binary opposition between the Duke's perception of Lady Lillian as 'foolish' and Kaltain's understanding of Dorian's "
-                                  "attachment to her as 'tragic'. This contradiction highlights the ambiguity surrounding Lady Lillian's character identity, "
-                                  "which is further complicated by Kaltain's own motivations. The Duke's dismissal of Dorian's feelings for Lady Lillian as 'impossible' "
-                                  "suggests a breakdown in traditional meaning structures, implying that societal norms and expectations may not apply to this particular situation. "
-                                  "This internal contradiction challenges the reader's understanding of the characters and their relationships, adding complexity to the narrative."}
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Throne of Glass")[0]
 
     elif book_title == "Sarah Maas - Crown of Midnight":
-        return { "book": "Crown of Midnight",
-                 "type": "deconstruction",
-                 "tags": ["identity", "contradiction", "binary", "ambiguity"],
-                 "chapter": "The Wagon",
-                 "excerpt": "\"I found a riddle, and my friends have been debating its answer for weeks. We even have a bet going about it,\" she said as vaguely as she could.",
-                 "analysis_note": "This passage exposes an internal contradiction in Celaena's character identity. On one hand, she presents herself as a carefree and impudent"
-                                  " individual who is willing to make a bet with Yellowlegs. This aligns with her earlier persona as a charming and confident assassin. "
-                                  "However, the ambiguity surrounding her 'friends' and their motivations suggests that Celaena may be struggling with her own identity and loyalties. "
-                                  "The binary opposition between her public image and private doubts creates tension and subverts the traditional meaning structure of a single, "
-                                  "fixed character identity." }
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Crown of Midnight")[0]
 
     elif book_title == "Sarah Maas - Heir of Fire":
-        return { "book": "Heir of Fire",
-                 "type": "deconstruction",
-                 "tags": ["binary opposition", "ambiguity", "character identity"],
-                 "chapter": "Chaol's Experiment with Dorian",
-                 "excerpt": "I think that this kingdom could use a healer as its queen.",
-                 "analysis_note": "The passage exposes a binary opposition between Chaol's perception of Sorscha and her actual character. On one hand, Chaol sees Sorscha as "
-                                  "'truly stunning' and thinks she would make a great queen, implying a romantic interest. On the other hand, Sorscha is revealed to be sad "
-                                  "and unresponsive to Chaol's suggestion, subverting his earlier expectations. This ambiguity challenges the traditional notion of a character's "
-                                  "identity being fixed or easily readable, instead highlighting the complexity and nuance of human emotions." }
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Heir of Fire")[0]
 
     elif book_title == "Sarah Maas - Queen of Shadows":
-        return { "book": "Queen of Shadows",
-                 "type": "deconstruction",
-                 "tags": ["identity", "contradiction", "binary"],
-                 "chapter": "The Blackbeaks",
-                 "excerpt": "Good choice, witchling, Manon said, and the word was a challenge and an order. She turned away, but glanced over her shoulder. "
-                            "Welcome to the Blackbeaks.",
-                 "analysis_note": "This passage exposes a binary opposition between belonging and mistake, as Elide reflects on her decision to join the Blackbeaks. "
-                                  "The phrase 'strange' suggests that this feeling of belonging is not entirely coherent with her earlier identity as a witchling. "
-                                  "This internal contradiction highlights the complexity of Elide's character development, as she navigates the blurred lines "
-                                  "between loyalty, duty, and personal desire. The ambiguity surrounding her decision to join the Blackbeaks subverts "
-                                  "traditional notions of good vs. evil, instead presenting a nuanced exploration of moral gray areas." }
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Queen of Shadows")[0]
 
     elif book_title == "Sarah Maas - Empire of Storms":
-        return { "book": "Empire of Storms",
-                 "type": "deconstruction",
-                 "tags": ["binary opposition", "ambiguity", "character identity"],
-                 "chapter": "Ilium's Significance",
-                 "excerpt": "The Mycenians are nothing more than a myth—they were banished three hundred years ago. If you’re looking for a symbol, they’re fairly "
-                            "outdated—and divisive.",
-                 "analysis_note": "This passage exposes a binary opposition between the perceived value of the Mycenians as a myth and their actual historical significance. "
-                                  "The text initially presents the Mycenians as 'nothing more than a myth', implying that they are irrelevant and outdated. "
-                                  "However, Aelin's subsequent explanation reveals that the Mycenians were once powerful crime lords who ruled Ilium and played a crucial role in "
-                                  "winning wars. This binary opposition between myth and reality subverts earlier meanings by highlighting the complexity of historical narratives. "
-                                  "Additionally, this passage also raises questions about character identity, as Aelin's connection to the Mycenians is ambiguous. "
-                                  "Her cousin's calculation of reasons why Ilium is vital suggests that Aelin's motivations may be rooted in her own sense of identity and purpose." }
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Empire of Storms")[0]
 
     elif book_title == "Sarah Maas - Tower of Dawn":
-        return { "book": "Tower of Dawn",
-                 "type": "deconstruction",
-                 "tags": ["binary opposition", "ambiguity", "character identity"],
-                 "chapter": "N/A",
-                 "excerpt": "\"I don't blame them for abandoning it if it's this cold in the summer,\" Nesryn muttered. \"Imagine it in winter.\"",
-                 "analysis_note": "The passage exposes a binary opposition between the harsh, unforgiving environment of the Fells and the perceived abandonment of the tower. "
-                                  "This contrast subverts earlier meanings by suggesting that even in the most inhospitable places, there can be beauty (the 'cool' air) "
-                                  "and value (the intact archway). Nesryn's muttering also hints at ambiguity in her own character identity, as she struggles to reconcile her "
-                                  "initial relief with the potential danger of the tower. This internal contradiction highlights the complexity of Nesryn's personality and "
-                                  "underscores the theme of uncertainty that pervades the novel."}
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Tower of Dawn")[0]
 
     elif book_title == "Sarah Maas - Kingdom of Ash":
-        return { "book": "Kingdom of Ash",
-                 "chapter": "26",
-                 "type": "deconstruction",
-                 "tags": ["identity", "contradiction", "binary"],
-                 "excerpt": "When you finish breaking me apart for the day, how does it feel to know that you are still nothing?",
-                 "analysis_note": "The passage exposes a contradiction in Cairn's character identity. On one hand, he grins and says 'Some fire left in you, it seems. "
-                                  "Good.' suggesting a sense of admiration or even affection towards Aelin. However, this is immediately subverted by his subsequent statement "
-                                  "that she is the only reason he has an oath to fulfill, implying that without her, he is nothing. This binary opposition between Cairn's "
-                                  "perceived value and actual worth highlights the theme of identity crisis in the series. The ambiguity surrounding Cairn's character raises "
-                                  "questions about the nature of loyalty, power dynamics, and the blurred lines between good and evil." }
+        return prompt_db.search(Prompt.book_name == "Sarah Maas - Kingdom of Ash")[0]
 
 def enrich_with_deconstructive_analysis(documents , book_title):
     deconstructed_docs = []
@@ -251,7 +231,7 @@ MODEL_CONTEXT_LIMITS = {
 
 def query_book(query, vector_store, model_name="llama3:8b-instruct-q4_0"):
     # Perform a similarity search
-    results = vector_store.similarity_search(query, k=1)
+    results = vector_store.similarity_search(query, k=5)
     context = "\n".join([doc.page_content for doc in results])
     if len(context) > MODEL_CONTEXT_LIMITS[model_name]:
         context = context[:MAX_CONTEXT_TOKENS]
@@ -264,7 +244,7 @@ def query_all_books(query, vectorstore_map, model_name="llama3:8b-instruct-q4_0"
     all_results = []
     for title, store in vectorstore_map.items():
         try:
-            results = store.similarity_search(query, k=1)
+            results = store.similarity_search(query, k=5)
             all_results.extend(results)
         except Exception as e:
             print(f"Error searching {title}: {e}")
@@ -286,7 +266,7 @@ def query_with_context(query, context, model_name):
         "with Sarah J. Maas's *Throne of Glass* series. [...]"
     )
 
-    prompt = ChatPromptTemplate.from_messages([
+    chat_prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system_message),
         HumanMessagePromptTemplate.from_template(
             "Answer the following question using ONLY the context provided.\n"
@@ -308,42 +288,39 @@ def query_with_context(query, context, model_name):
         callbacks=[stream_handler]
     )
 
-    chain = LLMChain(llm=selected_llm, prompt=prompt)
+    chain = LLMChain(llm=selected_llm, prompt=chat_prompt)
     return chain.run(context=context, question=query)
 
 
-def extract_pages_and_load_to_vector_store(input_pdf, book_spage_epage, book_pdf_name, vs_path, book_title, timeline_arc, deconstructive_analysis):
-    
-    if os.path.exists(vs_path):
-        print(f"Vector store for {book_pdf_name} already exists. Skipping extraction.")
-        return None
-    
+def extract_pages_and_load_to_vector_store(input_pdf, book_spage_epage, book_pdf_name, vs_path, book_title, timeline_arc, deconstructive_analysis, feminist_analysis):
+
     book_spage_epage = {
-        k: v for k, v in book_spage_epage.items() 
+        k: v for k, v in book_spage_epage.items()
         if k == book_pdf_name
     }
     book_sub_folder = list(book_spage_epage.keys())[0].removesuffix('.pdf')
     book_db_emdeddings_path = input_pdf + book_sub_folder
-    if deconstructive_analysis:
-        vs_path = os.path.join(book_db_emdeddings_path, f"{book_pdf_name.removesuffix('.pdf')}_deconstructive_analysis_vector_store.faiss")
-    elif timeline_arc:
-        vs_path = os.path.join(book_db_emdeddings_path, f"{book_pdf_name.removesuffix('.pdf')}_timeline_arc_vector_store.faiss")
-    else:
-        vs_path = os.path.join(book_db_emdeddings_path, f"{book_pdf_name.removesuffix('.pdf')}_vector_store.faiss")
-    pages = book_spage_epage[book_pdf_name]
-    pdf_path = os.path.join(input_pdf, book_pdf_name)
-    print(f"Processing {book_pdf_name} from {pdf_path}")
-    start_page, end_page = pages
-    reader = PdfReader(pdf_path)
-    writer = PdfWriter()
-    for page in range(start_page - 1, end_page):
-        writer.add_page(reader.pages[page])
     output_pdf_path = os.path.join(book_db_emdeddings_path, f"{book_pdf_name.removesuffix('.pdf')}_extracted.pdf")
-    with open(output_pdf_path, "wb") as output_pdf:
-        writer.write(output_pdf)
-    print(f"Extracted pages {start_page} to {end_page} from {book_pdf_name} and saved to {output_pdf_path}")
-    print(f"Storing the extracted pages to vector store...{vs_path}")
-    vector_store = store_pdf_as_vector_store(output_pdf_path, vs_path, book_title, timeline_arc, deconstructive_analysis)
+    if not os.path.exists(output_pdf_path):
+        pages = book_spage_epage[book_pdf_name]
+        pdf_path = os.path.join(input_pdf, book_pdf_name)
+        print(f"Processing {book_pdf_name} from {pdf_path}")
+        start_page, end_page = pages
+        reader = PdfReader(pdf_path)
+        writer = PdfWriter()
+        for page in range(start_page - 1, end_page):
+            writer.add_page(reader.pages[page])
+
+        with open(output_pdf_path, "wb") as output_pdf:
+            writer.write(output_pdf)
+        print(f"Extracted pages {start_page} to {end_page} from {book_pdf_name} and saved to {output_pdf_path}")
+        print(f"Storing the extracted pages to vector store...{vs_path}")
+    else:
+        print(f"Output PDF {output_pdf_path} already exists. Skipping extraction.")
+
+    vector_store = store_pdf_as_vector_store(output_pdf_path, vs_path, book_title, timeline_arc,
+                                             deconstructive_analysis, feminist_analysis)
+
     return vs_path, vector_store
 
 
@@ -353,7 +330,7 @@ def load_vector_store(vs_path):
         return FAISS.load_local(vs_path, OllamaEmbeddings(model=embedding_model), allow_dangerous_deserialization=True)
 
 
-def process_pdf(idx, book_pdf_name, timeline_arc, deconstructive_analysis):
+def process_pdf(idx, book_pdf_name, timeline_arc, deconstructive_analysis, feminist_analysis):
     if timeline_arc:
         book_name_without_suffix = book_pdf_name[:-4]
         book_vector_path = os.path.join(root_pdf_path_timeline, book_name_without_suffix)
@@ -363,6 +340,11 @@ def process_pdf(idx, book_pdf_name, timeline_arc, deconstructive_analysis):
         book_name_without_suffix = book_pdf_name[:-4]
         book_vector_path = os.path.join(root_pdf_path_deconstructive_analysis, book_name_without_suffix)
         vector_store_path = os.path.join(book_vector_path, f"{book_name_without_suffix}_deconstructive_analysis_vector_store.faiss")
+    elif feminist_analysis:
+        book_name_without_suffix = book_pdf_name[:-4]
+        book_vector_path = os.path.join(root_pdf_path_feminist_analysis, book_name_without_suffix)
+        vector_store_path = os.path.join(book_vector_path,
+                                         f"{book_name_without_suffix}_feminist_analysis_vector_store.faiss")
     else:
         book_name_without_suffix = book_pdf_name[:-4]
         book_vector_path = os.path.join(root_pdf_path, book_name_without_suffix)
@@ -375,21 +357,12 @@ def process_pdf(idx, book_pdf_name, timeline_arc, deconstructive_analysis):
         vs = load_vector_store(vector_store_path)
         return book_title, vector_store_path, vs
     else:
-        print(f"Vector store for {book_title} does not exist. Creating new vector store. Timeline Arc: {timeline_arc}. Deconstructive Analysis: {deconstructive_analysis}")
-        if not timeline_arc:
-            vs_path_vector_store = extract_pages_and_load_to_vector_store(root_pdf_path_timeline + "/",
-                                                                          tog_book_spage_epage_map,
-                                                                          book_pdf_name, vector_store_path, book_title,
-                                                                          timeline_arc, deconstructive_analysis)
-        elif deconstructive_analysis:
-            vs_path_vector_store = extract_pages_and_load_to_vector_store(root_pdf_path_timeline + "/",
-                                                                          tog_book_spage_epage_map,
-                                                                          book_pdf_name, vector_store_path, book_title,
-                                                                          timeline_arc, deconstructive_analysis)
-        else:
-            vs_path_vector_store = extract_pages_and_load_to_vector_store(root_pdf_path + "/", tog_book_spage_epage_map,
-                                                                          book_pdf_name, vector_store_path, book_title,
-                                                                          timeline_arc, deconstructive_analysis)
+        print(f"Vector store for {book_title} does not exist. Creating new vector store. "
+              f"Deconstructive Analysis: {deconstructive_analysis}, Timeline Arc: {timeline_arc}, Feminist Analysis: {feminist_analysis}")
+        vs_path_vector_store = extract_pages_and_load_to_vector_store(root_pdf_path + "/", tog_book_spage_epage_map,
+                                                                      book_pdf_name, vector_store_path, book_title,
+                                                                      timeline_arc, deconstructive_analysis,
+                                                                      feminist_analysis)
         #print(f"Vector store for {book_title} created at {vector_store_path}.")
         return book_title, vs_path_vector_store[0], vs_path_vector_store[1]
 
@@ -407,10 +380,19 @@ def render_scrollable_text(text):
 def clear_user_input():
     st.session_state.user_input = ""  # Clear the user input when the search type changes
 
+def render_suggested_prompts(text, key):
+    copy_code = f"""
+        <div style="margin-bottom: 10px;">
+            <input type="text" value="{text}" id="copyTarget_{key}" style="width: 70%;" readonly>
+        </div>
+    """
+    st.markdown(copy_code, unsafe_allow_html=True)
+
 base64_encoded_images = {}
-# tog_book_title_vs_path_map = {}
 tog_book_title_vector_store_data_map = {}
 tog_book_title_vector_store_data_map_timeline_arc = {}
+tog_book_title_vector_store_data_map_deconstructive_analysis = {}
+tog_book_title_vector_store_data_map_feminist_analysis = {}
 pdf_path_root = "/home/koushick/Young-Adult-ChatBot/"  # Replace with your PDF file path
 # PDF Path without Timeline Arc
 pdf_series = "Throne-Of-Glass"  # Replace with your PDF series name
@@ -420,6 +402,7 @@ root_pdf_path = os.path.join(pdf_path_root, pdf_series)
 pdf_series_timeline_arc = "Throne-Of-Glass-Timeline-Arc"  # Replace with your PDF series name for timeline arc
 root_pdf_path_timeline = os.path.join(pdf_path_root, pdf_series + "-timeline-arc")
 root_pdf_path_deconstructive_analysis = os.path.join(pdf_path_root, pdf_series + "-deconstructive-analysis")
+root_pdf_path_feminist_analysis = os.path.join(pdf_path_root, pdf_series + "-feminist-analysis")
 
 tog_book_spage_epage_map = {"1-sarah-maas-assassins-blade.pdf": [7, 318],
                             "2-sarah-maas-throne_of_glass.pdf": [7, 296],
@@ -453,7 +436,7 @@ st.write("Welcome to the Sarah Maas AI Chatbot! I have been trained on the Thron
 img_base64 = get_base64_image("Sarah-Maas-AI.png")
 st.markdown(
     f"""
-        <div style='text-align: center;'>
+        <div style='label: center;'>
             <img src="data:image/png;base64,{img_base64}" width="300"><br>
         </div>
         """,
@@ -472,7 +455,7 @@ with st.spinner("Loading the Books..."):
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = []
         for index, pdf_name in enumerate(tog_pdf_list):
-            futures.append(executor.submit(process_pdf, index, pdf_name, False, False))
+            futures.append(executor.submit(process_pdf, index, pdf_name, False, False, False))
 
         for future in as_completed(futures):
             try:
@@ -487,12 +470,11 @@ with st.spinner("Loading the Books..."):
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = []
         for index, pdf_name in enumerate(tog_pdf_list):
-            futures.append(executor.submit(process_pdf, index, pdf_name, True, False))
+            futures.append(executor.submit(process_pdf, index, pdf_name, True, False, False))
 
         for future in as_completed(futures):
             try:
                 title, path, vectorstore = future.result()
-                # tog_book_title_vs_path_map_timeline_arc[title] = path
                 tog_book_title_vector_store_data_map_timeline_arc[title] = vectorstore
             except Exception as e:
                 print(f"Error processing one of the PDFs: {e}")
@@ -501,24 +483,66 @@ with st.spinner("Loading the Books..."):
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = []
         for index, pdf_name in enumerate(tog_pdf_list):
-            futures.append(executor.submit(process_pdf, index, pdf_name, False, True))
+            futures.append(executor.submit(process_pdf, index, pdf_name, False, True, False))
 
         for future in as_completed(futures):
             try:
                 title, path, vectorstore = future.result()
-                # tog_book_title_vs_path_map_timeline_arc[title] = path
-                tog_book_title_vector_store_data_map_timeline_arc[title] = vectorstore
+                tog_book_title_vector_store_data_map_deconstructive_analysis[title] = vectorstore
             except Exception as e:
                 print(f"Error processing one of the PDFs: {e}")
 
-#st.success("Books Loaded. Ready to chat!")
+    # Process all PDFs for feminist analysis
+    # with ThreadPoolExecutor(max_workers=5) as executor:
+    #     futures = []
+    #     for index, pdf_name in enumerate(tog_pdf_list):
+    #         futures.append(executor.submit(process_pdf, index, pdf_name, False, False, True))
+    #
+    #     for future in as_completed(futures):
+    #         try:
+    #             title, path, vectorstore = future.result()
+    #             tog_book_title_vector_store_data_map_feminist_analysis[title] = vectorstore
+    #         except Exception as e:
+    #             print(f"Error processing one of the PDFs: {e}")
+    process_pdf(0,"1-sarah-maas-assassins-blade.pdf",False, False, True)
+
 st.write("Choose search type and explore the books.")
-search_options = ["A Timeline Arc of Celeana across Throne of Glass Series", "Deconstructive Analysis of the Throne of Glass Series", "Specific book with Throne of Glass Series"]
-search_type = st.radio("I would like to search ", [search_options[0], search_options[1], search_options[2]], index=0, on_change=clear_user_input)
+search_options = ["A Timeline Arc of Celeana across Throne of Glass Series",
+                  "Deconstructive Analysis of the Throne of Glass Series",
+                  "Feminist Analysis of the Throne of Glass Series",
+                  "Specific book with Throne of Glass Series"]
+search_type = st.radio("I would like to search ", [search_options[0], search_options[1], search_options[2], search_options[3]], index=0, on_change=clear_user_input)
+# Prompt suggestions for each category
+prompt_suggestions_map = {
+    "A Timeline Arc of Celeana across Throne of Glass Series": [
+        "How does Celaena evolve into Aelin over the series?",
+        "Describe Celaena's emotional journey from The Assassin's Blade to Kingdom of Ash.",
+        "Highlight turning points in Celaena’s identity across the series.",
+        "What personal losses most influenced Celaena’s transformation?"
+    ],
+    "Deconstructive Analysis of the Throne of Glass Series": [
+        "How does the concept of heroism get deconstructed in the series?",
+        "What binary oppositions are reversed or blurred in Celaena’s character?",
+        "In what ways is Aelin's identity unstable or self-contradictory?",
+        "Where does the narrative contradict its own moral logic?"
+    ],
+    "Specific book with Throne of Glass Series": [
+        "Summarize key character decisions in Queen of Shadows.",
+        "What was the emotional climax of Empire of Storms?",
+        "How does Tower of Dawn contrast with the main arc?",
+        "What role did Lysandra play in Kingdom of Ash?"
+    ]
+}
+
+# Show suggestive prompts dynamically
+if search_type in prompt_suggestions_map:
+    st.markdown("### 💡 Suggested Prompts")
+    for idx, prompt in enumerate(prompt_suggestions_map[search_type]):
+        render_suggested_prompts(prompt, key=idx)
 
 title_selection = "Select a book"
 
-if search_type == search_options[2]:
+if search_type == search_options[3]:
     book_titles = ["Select a book"] + list(tog_title_cover_image_path_map.keys())
     title_selection = st.selectbox("Select a book:", book_titles, on_change=clear_user_input, key="book_selection")
 
@@ -535,8 +559,7 @@ if search_type == search_options[2]:
                 unsafe_allow_html=True
             )
 
-#user_input = st.text_input("What would you like to know?", key="user_input", placeholder="Ask a question about the book or timeline arc...")
-user_input = st.text_area("What would you like to know?", key="user_input", placeholder="Ask a question about the book or timeline arc...", height=100)
+user_input = st.text_area("What would you like to know?", key="user_input", placeholder="Ask me something about the Throne of Glass series...", height=100)
 # Search button
 search_clicked = st.button("🔍 Search")
 
@@ -549,9 +572,13 @@ if search_clicked:
         st.warning("Please enter a question before searching.")
     else:
         with st.spinner("Searching..."):
-            if search_type == search_options[0] or search_type == search_options[1]:  # Timeline Arc or Deconstructive Analysis
-                response = query_all_books(user_input, tog_book_title_vector_store_data_map)
-            elif search_type == search_options[2] and title_selection != "Select a book":
+            if search_type == search_options[0]:  # Timeline Arc
+                response = query_all_books(user_input, tog_book_title_vector_store_data_map_timeline_arc)
+            elif search_type == search_options[1]:  # Deconstructive Analysis
+                response = query_all_books(user_input, tog_book_title_vector_store_data_map_deconstructive_analysis)
+            elif search_type == search_options[2]:  # Feminist Analysis
+                response = query_all_books(user_input, tog_book_title_vector_store_data_map_feminist_analysis)
+            elif search_type == search_options[3] and title_selection != "Select a book":
                 response = query_book(user_input, tog_book_title_vector_store_data_map[title_selection])
             else:
                 response = None
