@@ -433,7 +433,7 @@ st.set_page_config(page_title="Sarah Maas AI Chatbot", layout="centered")
 img_base64 = get_base64_image("SarAIh_Maas_V2.png")
 st.markdown(
     f"""
-        <div style='label: center;'>
+        <div style='text-align: center;'>
             <img src="data:image/png;base64,{img_base64}" width="400"><br>
         </div>
         """,
