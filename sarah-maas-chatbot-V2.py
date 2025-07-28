@@ -1,7 +1,6 @@
 import base64
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import json
 import streamlit as st
 from PyPDF2 import PdfReader, PdfWriter
 from langchain.callbacks.base import BaseCallbackHandler
@@ -24,7 +23,6 @@ def extract_feminist_themes(book_title):
         multi_response_docs = prompt_db.search(Prompt.book_name == "Sarah Maas - Assassins Blade")
         for fem_doc in multi_response_docs:
             if "feminist_analysis" in fem_doc.keys():
-                print(f"fem_doc = {fem_doc}")
                 return fem_doc
 
     elif book_title == "Sarah Maas - Throne of Glass":
@@ -388,6 +386,7 @@ def render_suggested_prompts(text, key):
     """
     st.markdown(copy_code, unsafe_allow_html=True)
 
+
 base64_encoded_images = {}
 tog_book_title_vector_store_data_map = {}
 tog_book_title_vector_store_data_map_timeline_arc = {}
@@ -431,13 +430,11 @@ for index, title in enumerate(tog_title_list):
     tog_title_cover_image_path_map[title] = [tog_pdf_name, root_pdf_path + "/" + tog_pdf_name[0:len(tog_pdf_name)-4] + "/cover_page.png"]
 
 st.set_page_config(page_title="Sarah Maas AI Chatbot", layout="centered")
-st.title("Sarah Maas AI Chatbot")
-st.write("Welcome to the Sarah Maas AI Chatbot! I have been trained on the Throne of Glass series, including all the books and a timeline arc of Celaena's journey across the series. You can ask me questions about the books or the timeline arc.")
-img_base64 = get_base64_image("Sarah-Maas-AI.png")
+img_base64 = get_base64_image("SarAIh_Maas_V2.png")
 st.markdown(
     f"""
         <div style='label: center;'>
-            <img src="data:image/png;base64,{img_base64}" width="300"><br>
+            <img src="data:image/png;base64,{img_base64}" width="400"><br>
         </div>
         """,
     unsafe_allow_html=True
@@ -493,18 +490,18 @@ with st.spinner("Loading the Books..."):
                 print(f"Error processing one of the PDFs: {e}")
 
     # Process all PDFs for feminist analysis
-    # with ThreadPoolExecutor(max_workers=5) as executor:
-    #     futures = []
-    #     for index, pdf_name in enumerate(tog_pdf_list):
-    #         futures.append(executor.submit(process_pdf, index, pdf_name, False, False, True))
-    #
-    #     for future in as_completed(futures):
-    #         try:
-    #             title, path, vectorstore = future.result()
-    #             tog_book_title_vector_store_data_map_feminist_analysis[title] = vectorstore
-    #         except Exception as e:
-    #             print(f"Error processing one of the PDFs: {e}")
-    process_pdf(0,"1-sarah-maas-assassins-blade.pdf",False, False, True)
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = []
+        for index, pdf_name in enumerate(tog_pdf_list):
+            futures.append(executor.submit(process_pdf, index, pdf_name, False, False, True))
+
+        for future in as_completed(futures):
+            try:
+                title, path, vectorstore = future.result()
+                tog_book_title_vector_store_data_map_feminist_analysis[title] = vectorstore
+            except Exception as e:
+                print(f"Error processing one of the PDFs: {e}")
+    # process_pdf(0,"1-sarah-maas-assassins-blade.pdf",False, False, True)
 
 st.write("Choose search type and explore the books.")
 search_options = ["A Timeline Arc of Celeana across Throne of Glass Series",
@@ -531,12 +528,21 @@ prompt_suggestions_map = {
         "What was the emotional climax of Empire of Storms?",
         "How does Tower of Dawn contrast with the main arc?",
         "What role did Lysandra play in Kingdom of Ash?"
+    ],
+    "Feminist Analysis of the Throne of Glass Series" :
+    [
+        "Identify scenes in this book where female characters exercise personal agency or challenge expected gender roles.",
+        "What power structures in this book are oppressive to women? How do female characters resist or uphold these structures?"
     ]
 }
 
 # Show suggestive prompts dynamically
 if search_type in prompt_suggestions_map:
-    st.markdown("### 💡 Suggested Prompts")
+    st.markdown("""
+    <div style='text-align: left;'>
+    ### 💡 Suggested Prompts
+    </div>
+    """, unsafe_allow_html=True)
     for idx, prompt in enumerate(prompt_suggestions_map[search_type]):
         render_suggested_prompts(prompt, key=idx)
 
@@ -559,19 +565,64 @@ if search_type == search_options[3]:
                 unsafe_allow_html=True
             )
 
-user_input = st.text_area("What would you like to know?", key="user_input", placeholder="Ask me something about the Throne of Glass series...", height=100)
-# Search button
-search_clicked = st.button("🔍 Search")
+
+# Chat bubble styles
+st.markdown("""
+    <style>
+    .chat-container {
+        max-height: 500px;
+        overflow-y: auto;
+        padding: 10px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        background-color: #f9f9f9;
+    }
+    .user-bubble {
+        background-color: #dcf8c6;
+        color: black;
+        padding: 10px;
+        margin: 8px;
+        border-radius: 10px;
+        max-width: 70%;
+        align-self: flex-end;
+    }
+    .ai-bubble {
+        background-color: #f1f0f0;
+        color: black;
+        padding: 10px;
+        margin: 8px;
+        border-radius: 10px;
+        max-width: 70%;
+        align-self: flex-start;
+    }
+    .bubble-container {
+        display: flex;
+        flex-direction: column;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
 # Output container
 output_container = st.empty()
+
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+
+user_input = st.text_area("", key="user_input", placeholder="Ask me something about the Throne of Glass series...", height=100)
+# Search button
+search_clicked = st.button("🔍 Search")
 
 # Only run search if button is clicked
 if search_clicked:
     if not user_input.strip():
         st.warning("Please enter a question before searching.")
     else:
-        with st.spinner("Searching..."):
+        st.session_state.chat_history.append({
+            "sender": "me",
+            "message": user_input
+        })
+        with st.spinner("Analyzing...Give me a few minutes..."):
             if search_type == search_options[0]:  # Timeline Arc
                 response = query_all_books(user_input, tog_book_title_vector_store_data_map_timeline_arc)
             elif search_type == search_options[1]:  # Deconstructive Analysis
@@ -583,3 +634,32 @@ if search_clicked:
             else:
                 response = None
                 st.warning("Please select a book for book-specific search.")
+
+        st.session_state.chat_history.append({
+            "sender": "AI",
+            "message": response
+        })
+
+
+# Render chat bubbles
+st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+for idx, entry in enumerate(st.session_state.chat_history):
+    if entry:
+        bubble_class = "user-bubble" if entry["sender"] == "me" else "ai-bubble"
+        align_style = "align-items: flex-end;" if entry["sender"] == "me" else "align-items: flex-start;"
+        # For last AI entry, stream it with output_container
+        if entry["sender"] == "AI" and idx == len(st.session_state.chat_history) - 1:
+            # Use output_container to stream the last AI message
+            output_container.markdown(f"""
+                        <div class="bubble-container" style="{align_style}">
+                            <div class="{bubble_class}">{entry['message']}</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+        else:
+            # Static render for older messages
+            st.markdown(f"""
+                        <div class="bubble-container" style="{align_style}">
+                            <div class="{bubble_class}">{entry['message']}</div>
+                        </div>
+                    """, unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
