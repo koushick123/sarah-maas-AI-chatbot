@@ -430,6 +430,15 @@ for index, title in enumerate(tog_title_list):
     tog_title_cover_image_path_map[title] = [tog_pdf_name, root_pdf_path + "/" + tog_pdf_name[0:len(tog_pdf_name)-4] + "/cover_page.png"]
 
 st.set_page_config(page_title="Sarah Maas AI Chatbot", layout="centered")
+hb_img_base64 = get_base64_image("HB_37.png")
+st.markdown(f"""
+<div style='text-align: center;'>
+    <img src="data:image/png;base64,{hb_img_base64}" width="300"><br><br>
+    <h5><font color="blue"><b>Hey Archiekins</b></font></h5> <br>I made this AI application to help you get started in your doctorate journey. This is an AI chatbot trained on the entire book set of <b>Throne of Glass Series</b>.<br>
+    Like squirrels who helped Rama build a bridge to cross Lanka, I am hoping SarAIh Maas can help you in your journey to PhD.<br>
+    <h4>My very best of luck to you!!</h4>
+</div>
+""", unsafe_allow_html=True)
 img_base64 = get_base64_image("SarAIh_Maas_V2.png")
 st.markdown(
     f"""
