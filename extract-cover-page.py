@@ -1,8 +1,27 @@
 import os.path
+from threading import Thread
 
+from langchain.chat_models import ChatOpenAI
+from langchain.chains.summarize import load_summarize_chain
 from pdf2image import convert_from_path
 from langchain_community.document_loaders import PyPDFLoader
 from PyPDF2 import PdfReader, PdfWriter
+from langchain.schema import Document
+import os
+
+llm = ChatOpenAI(model="gpt-4", temperature=0.1)
+
+def summarize_with_langchain(text: str) -> str:
+    # Use LangChain's summarization chain
+    try:
+        print(f"Size of context = {len(text)}")
+        docs = [Document(page_content=text)]
+        chain = load_summarize_chain(llm, chain_type="map_reduce")
+        result = chain.run(docs)
+    except Exception as openaiexcep:
+        print(f"Exception from openAI = {openaiexcep}")
+
+    return result.strip()
 
 def extract_cover_page(pdf_path, outputfolderpath, filename, page_number=1):
     from PyPDF2 import PdfReader, PdfWriter
@@ -73,16 +92,76 @@ def extract_chapter_docs():
         if chapter_title:
             chapter_docs.append(doc)
 
-    print(len(chapter_docs))
-    # List the doc contents
-    count=0
-    section1_docs = []
-    for chap_doc in chapter_docs:
-        section_str= chap_doc.metadata['Section:']
-        if "THE PIRATE" in section_str:
-            section1_docs.append(chap_doc)
+    return chapter_docs
 
-    print(section1_docs)
+CHAR_LIMIT = 8192
+
+def extract_chapter_summary():
+    chapter_documents = extract_chapter_docs()
+    # Create a Dict of Chapter-Name: Summary of all chapter pages - Use OpenAI API to get summary
+    # Loop through original docs and for entry matching Chapter-Name , retrieve the summary from Dict
+    # and update metadata as 'summary'
+    chapter_page_content = {}
+    all_page_contents = None
+    old_chapter_name = None
+    key = None
+    for doc in chapter_documents:
+        chapter_name = doc.metadata["Chapter:"]
+        section_name = doc.metadata["Section:"]
+
+        if old_chapter_name is None:
+            old_chapter_name = chapter_name
+            key = section_name + "-" + old_chapter_name
+
+        # Update the chapter_page_content dict when new Chapter begins
+        if old_chapter_name != chapter_name and key:
+            chapter_page_content[key] = all_page_contents
+            old_chapter_name = chapter_name
+            key = section_name + "-" + old_chapter_name
+            # Start with new Chapter page content
+            all_page_contents = doc.page_content
+        else:
+            if all_page_contents is None:
+                all_page_contents = doc.page_content
+            else:
+                all_page_contents += "\n".join(doc.page_content)
+
+    chapter_summary = {}
+
+    for sec_chap_name, page_content in chapter_page_content.items():
+        if len(page_content) <= CHAR_LIMIT:
+            print(f"Summarizing for {sec_chap_name}")
+            chapter_summary[sec_chap_name] = summarize_with_langchain(page_content)
+        else:
+            # Extract CHAR_LIMIT tokens repeatedly until all done
+            summaries = ""
+            while True:
+                context = page_content[:CHAR_LIMIT]
+                summaries += summarize_with_langchain(context)
+
+                # Exclude the first CHAR_LIMIT characters
+                page_content = page_content[CHAR_LIMIT:]
+                if len(page_content) <= CHAR_LIMIT:
+                    break
+
+            summaries += summarize_with_langchain(page_content)
+            chapter_summary[sec_chap_name] = summaries
+
+    for doc in chapter_documents:
+        doc_chap_name = doc.metadata["Chapter:"]
+        doc_section_name = doc.metadata["Section:"]
+        doc.metadata["Summary"] = chapter_summary[doc_section_name+"-"+doc_chap_name]
+
+    for doc in chapter_documents:
+        print(doc.metadata)
+
+def safe_summarize(text):
+    while True:
+        try:
+            return summarize_with_langchain(text)
+        except RateLimitError:
+            print("Rate limit exceeded. Waiting 2 seconds before retrying...")
+            time.sleep(2)
 
 if __name__ == "__main__":
     # list all files from pdf_folder
@@ -90,7 +169,7 @@ if __name__ == "__main__":
 
     pdf_path = "/home/koushick/Young-Adult-ChatBot/Throne-Of-Glass/1-sarah-maas-assassins-blade.pdf"
     extracted_pdf_path = "/home/koushick/Young-Adult-ChatBot/Throne-Of-Glass/1-sarah-maas-assassins-blade/sm-assassins-blade-extracted.pdf"
-    extract_chapter_docs()
+    extract_chapter_summary()
     # pdf_folder = "/home/koushick/Young-Adult-ChatBot/Court-Of-Thorns-And-Roses"
     # for filename in os.listdir(pdf_folder):
     #     if filename.endswith(".pdf"):
