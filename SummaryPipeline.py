@@ -1,14 +1,19 @@
-import os.path
-import time
-from langchain.chat_models import ChatOpenAI
-from langchain.chains.summarize import load_summarize_chain
-from langchain_community.document_loaders import PyPDFLoader
-from PyPDF2 import PdfReader, PdfWriter
-from langchain.schema import Document
 import os
+import os.path
 import re
-import tiktoken
+import time
 
+import tiktoken
+from PyPDF2 import PdfReader, PdfWriter
+from langchain.chains.summarize import load_summarize_chain
+from langchain.chat_models import ChatOpenAI
+from langchain.schema import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import FAISS
+
+embedding_model = "nomic-embed-text:v1.5"
 llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
 
 def summarize_with_langchain(text: str) -> str:
@@ -20,7 +25,7 @@ def summarize_with_langchain(text: str) -> str:
     return result.strip()
 
 
-def count_tokens(text, model_name="gpt-4"):
+def count_tokens(text, model_name="gpt-4-turbo"):
     # Get encoding for the model
     encoding = tiktoken.encoding_for_model(model_name)
     tokens = encoding.encode(text)
@@ -89,8 +94,9 @@ def extract_chapter_summary():
     all_page_contents = None
     old_chapter_name = None
     key = None
-    count = 0
-    for doc in chapter_documents:
+    
+    chapter_documents_with_chapter = list(filter(lambda doc: doc.metadata["Chapter:"] != '',  chapter_documents))
+    for doc in chapter_documents_with_chapter:
         chapter_name = doc.metadata["Chapter:"]
         section_name = doc.metadata["Part:"]
 
@@ -123,9 +129,9 @@ def extract_chapter_summary():
     filtered_dict = {
         k: v for k, v in chapter_page_content.items() if "Chapter" in k
     }
-    # sorted_dict = dict(sorted(filtered_dict.items(), key=lambda item: len(item[1])))
 
     chapter_summary = {}
+    count = 0
     for sec_chap_name, page_content in filtered_dict.items():
         print(f"Section = {sec_chap_name}\n")
         token_count = count_tokens(page_content)
@@ -133,9 +139,12 @@ def extract_chapter_summary():
         if token_count <= TOKEN_LIMIT:
             print(f"Summarizing for {sec_chap_name}")
             print(f"Summarizing CONTENT === {page_content}")
-            # chapter_summary[sec_chap_name] = summarize_with_langchain(page_content)
-            chapter_summary[sec_chap_name] = "SUMMARIZED CONTENT"
-            break
+            chapter_summary[sec_chap_name] = summarize_with_langchain(page_content)
+            # chapter_summary[sec_chap_name] = "SUMMARIZED CONTENT"
+            with open("/home/koushick/Young-Adult-ChatBot/Crescent-City/house-of-earth-and-blood/summary_text.txt","a+") as file:
+                file.write(f"Summary for {sec_chap_name}\n"+chapter_summary[sec_chap_name]+"\n\n")
+
+            
         else:
             # Extract CHAR_LIMIT tokens repeatedly until all done
             summaries = ""
@@ -155,23 +164,35 @@ def extract_chapter_summary():
             print(f"Summary for {sec_chap_name} ==== {summaries} ")
             chapter_summary[sec_chap_name] = summaries
 
-    for doc in chapter_documents:
+    for doc in chapter_documents_with_chapter:
         doc_chap_name = doc.metadata["Chapter:"]
         doc_section_name = doc.metadata["Part:"]
         if doc_chap_name:
             doc.metadata["Summary"] = chapter_summary[doc_section_name+"-"+doc_chap_name]
 
-    old_chap_name = None
-    for index, item in enumerate(chapter_documents):
-        # chap_name = item.metadata["Chapter:"]
-        # if old_chap_name != chap_name:
-        #     if old_chap_name:
-        #         break
-        #     old_chap_name = chap_name
+    store_as_vectors(chapter_documents_with_chapter, "/home/koushick/Young-Adult-ChatBot/Crescent-City/house-of-earth-and-blood/earth_and_blood_vector_store.faiss")
 
-        print(item.metadata["Part:"])
-        print(item.metadata["Chapter:"])
-        print(item.metadata["Summary"])
+ 
+def store_as_vectors(enriched_docs, vs_path: str):
+    
+    if not os.path.exists(vs_path):
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+        split_chapter_docs = text_splitter.split_documents(enriched_docs)
+        
+        # Create embeddings for the chunks
+        embeddings = OllamaEmbeddings(model=embedding_model)
+        print("Created Embeddings")
+        # Create a vector store from the chunks
+        vector_store = FAISS.from_documents(
+            split_chapter_docs,
+            embeddings
+        )
+        print("Created Vector Store")
+        # Save the vector store to disk
+        vector_store.save_local(vs_path)
+        print(f"Saved vector store at {vs_path}")
+    else:
+        print(f"Path {vs_path} already exists.")
 
 
 def get_start_index(page_content):
