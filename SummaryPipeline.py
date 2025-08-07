@@ -14,10 +14,10 @@ from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.vectorstores import FAISS
 
 embedding_model = "nomic-embed-text:v1.5"
-llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
 
 def summarize_with_langchain(text: str) -> str:
     # Use LangChain's summarization chain
+    llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
     docs = [Document(page_content=text)]
     chain = load_summarize_chain(llm, chain_type="refine")
     result = chain.run(docs)
@@ -129,48 +129,64 @@ def extract_chapter_summary():
     filtered_dict = {
         k: v for k, v in chapter_page_content.items() if "Chapter" in k
     }
+    from tinydb import TinyDB, Query
+    prompt_db = TinyDB('sm-crescent-city-book-1.json')
+    Chapter = Query()
 
-    chapter_summary = {}
-    count = 0
     for sec_chap_name, page_content in filtered_dict.items():
-        print(f"Section = {sec_chap_name}\n")
-        token_count = count_tokens(page_content)
-        print(f"Page Content token size = {token_count}\n")
-        if token_count <= TOKEN_LIMIT:
-            print(f"Summarizing for {sec_chap_name}")
-            print(f"Summarizing CONTENT === {page_content}")
-            chapter_summary[sec_chap_name] = summarize_with_langchain(page_content)
-            # chapter_summary[sec_chap_name] = "SUMMARIZED CONTENT"
-            with open("/home/koushick/Young-Adult-ChatBot/Crescent-City/house-of-earth-and-blood/summary_text.txt","a+") as file:
-                file.write(f"Summary for {sec_chap_name}\n"+chapter_summary[sec_chap_name]+"\n\n")
-
-            
+        chapter_content = prompt_db.get(Chapter.Name == sec_chap_name)
+        if chapter_content:
+            print(f"Chapter {sec_chap_name} exists in TinyDB")
         else:
-            # Extract CHAR_LIMIT tokens repeatedly until all done
-            summaries = ""
-            while True:
-                context = page_content[0:CHAR_LIMIT]
-                print(f"Summarizing for {sec_chap_name} after truncating to context window size")
-                print(f"Sending context size = {len(context)}")
-                summaries += summarize_with_langchain(context)
+            prompt_db.insert({
+                "Name":sec_chap_name,
+                "Page Content": page_content
+            })
+            print(f"Inserted {sec_chap_name} page contents")
 
-                # Exclude the first CHAR_LIMIT characters
-                page_content = page_content[CHAR_LIMIT:]
-                token_count = count_tokens(page_content)
-                if token_count <= TOKEN_LIMIT:
-                    break
+    prompt_db.close()
 
-            summaries += summarize_with_langchain(page_content)
-            print(f"Summary for {sec_chap_name} ==== {summaries} ")
-            chapter_summary[sec_chap_name] = summaries
-
-    for doc in chapter_documents_with_chapter:
-        doc_chap_name = doc.metadata["Chapter:"]
-        doc_section_name = doc.metadata["Part:"]
-        if doc_chap_name:
-            doc.metadata["Summary"] = chapter_summary[doc_section_name+"-"+doc_chap_name]
-
-    store_as_vectors(chapter_documents_with_chapter, "/home/koushick/Young-Adult-ChatBot/Crescent-City/house-of-earth-and-blood/earth_and_blood_vector_store.faiss")
+    # chapter_summary = {}
+    # count = 0
+    # for sec_chap_name, page_content in filtered_dict.items():
+    #     print(f"Section = {sec_chap_name}\n")
+    #     token_count = count_tokens(page_content)
+    #     print(f"Page Content token size = {token_count}\n")
+    #     if token_count <= TOKEN_LIMIT:
+    #         print(f"Summarizing for {sec_chap_name}")
+    #         print(f"Summarizing CONTENT === {page_content}")
+    #         chapter_summary[sec_chap_name] = summarize_with_langchain(page_content)
+    #         # chapter_summary[sec_chap_name] = "SUMMARIZED CONTENT"
+    #         with open("/home/koushick/Young-Adult-ChatBot/Crescent-City/house-of-earth-and-blood/summary_text.txt","a+") as file:
+    #             file.write(f"Summary for {sec_chap_name}\n"+chapter_summary[sec_chap_name]+"\n\n")
+    #
+    #
+    #     else:
+    #         # Extract CHAR_LIMIT tokens repeatedly until all done
+    #         summaries = ""
+    #         while True:
+    #             context = page_content[0:CHAR_LIMIT]
+    #             print(f"Summarizing for {sec_chap_name} after truncating to context window size")
+    #             print(f"Sending context size = {len(context)}")
+    #             summaries += summarize_with_langchain(context)
+    #
+    #             # Exclude the first CHAR_LIMIT characters
+    #             page_content = page_content[CHAR_LIMIT:]
+    #             token_count = count_tokens(page_content)
+    #             if token_count <= TOKEN_LIMIT:
+    #                 break
+    #
+    #         summaries += summarize_with_langchain(page_content)
+    #         print(f"Summary for {sec_chap_name} ==== {summaries} ")
+    #         chapter_summary[sec_chap_name] = summaries
+    #
+    # for doc in chapter_documents_with_chapter:
+    #     doc_chap_name = doc.metadata["Chapter:"]
+    #     doc_section_name = doc.metadata["Part:"]
+    #     if doc_chap_name:
+    #         doc.metadata["Summary"] = chapter_summary[doc_section_name+"-"+doc_chap_name]
+    #
+    # store_as_vectors(chapter_documents_with_chapter, "/home/koushick/Young-Adult-ChatBot/Crescent-City/house-of-earth-and-blood/earth_and_blood_vector_store.faiss")
 
  
 def store_as_vectors(enriched_docs, vs_path: str):
@@ -197,7 +213,6 @@ def store_as_vectors(enriched_docs, vs_path: str):
 
 def get_start_index(page_content):
     digit_start = re.match(r'^\s*\d{1,2}\n*', page_content)
-    print(f"Digit start == {digit_start}")
     if digit_start:
         return len(digit_start.group())
     else:
