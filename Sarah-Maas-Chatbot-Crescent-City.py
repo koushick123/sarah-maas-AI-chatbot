@@ -32,16 +32,15 @@ def fetch_book_contents(sel_chap):
     if st.session_state[modal_key]:
         with modal.container():
             # Display content with limited height so it scrolls
-            with st.container():
-                st.markdown(
-                    f"""
-                        <div style='text-align: left;'>
-                        {page_contents}
-                        </div>
-                    """, unsafe_allow_html=True
-                )
-                if st.button("❌ Close", key="close-modal"):
-                    st.session_state.modal_open = False
+            st.markdown(
+                f"""
+                    <div style='text-align: left;'>
+                    {page_contents}
+                    </div>
+                """, unsafe_allow_html=True
+            )
+            if st.button("❌ Close", key="close-modal"):
+                st.session_state.modal_open = False
 
 st.set_page_config(page_title="Sarah Maas AI Chatbot", layout="centered")
 img_base64 = get_base64_image("SarAIh_Maas_V2.png")
@@ -61,7 +60,10 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # List the drop down of Crescent city books
-book_titles = ["Select a Book","Crescent City - House of Earth and Blood","Crescent City - House of Sky and Breath","Crescent City - House of Flame and Shadow"]
+book_titles = ["Select a Book",
+               "Crescent City - House of Earth and Blood",
+               "Crescent City - House of Sky and Breath",
+               "Crescent City - House of Flame and Shadow"]
 selected_book = st.selectbox("Select a book", book_titles, key="book_selection")
 
 if selected_book != book_titles[0]:
