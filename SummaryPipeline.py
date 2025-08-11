@@ -19,7 +19,7 @@ def summarize_with_langchain(text: str) -> str:
     # Use LangChain's summarization chain
     llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
     docs = [Document(page_content=text)]
-    chain = load_summarize_chain(llm, chain_type="refine")
+    chain = load_summarize_chain(llm, chain_type="map_reduce")
     result = chain.run(docs)
     time.sleep(61)
     return result.strip()
@@ -130,21 +130,22 @@ def extract_chapter_summary():
         k: v for k, v in chapter_page_content.items() if "Chapter" in k
     }
     from tinydb import TinyDB, Query
-    prompt_db = TinyDB('sm-crescent-city-book-1.json')
+    crescent_city_db = TinyDB('sm-crescent-city-book-1.json')
     Chapter = Query()
 
     for sec_chap_name, page_content in filtered_dict.items():
-        chapter_content = prompt_db.get(Chapter.Name == sec_chap_name)
+        chapter_content = crescent_city_db.get(Chapter.Name == sec_chap_name)
         if chapter_content:
             print(f"Chapter {sec_chap_name} exists in TinyDB")
         else:
-            prompt_db.insert({
-                "Name":sec_chap_name,
+            crescent_city_db.insert({
+                "Name":sec_chap_name[sec_chap_name.index("-")+1:].replace(" ",""),
+                "Part": sec_chap_name[:sec_chap_name.index("-")].replace(" ",""),
                 "Page Content": page_content
             })
             print(f"Inserted {sec_chap_name} page contents")
 
-    prompt_db.close()
+    crescent_city_db.close()
 
     # chapter_summary = {}
     # count = 0
