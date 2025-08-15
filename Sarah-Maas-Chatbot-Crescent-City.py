@@ -1,4 +1,3 @@
-import os
 from fastapi import FastAPI
 from langchain.chains import LLMChain
 from langchain.chains.summarize import load_summarize_chain
@@ -7,14 +6,30 @@ from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, H
 from langchain.schema import Document
 from pydantic import BaseModel
 from tinydb import TinyDB, Query
+from fastapi.middleware.cors import CORSMiddleware
 
 # Initialize FastAPI app
 app = FastAPI()
+
+# Allow specific origins (replace with your Angular dev server URL)
+origins = [
+    "http://localhost:4200"  # Angular local dev
+    #"https://your-angular-app.com"  # Prod Angular app
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,            # List of allowed origins
+    allow_credentials=True,           # Allow cookies/auth headers
+    allow_methods=["GET","POST"],
+    allow_headers=["*"],               # Allow all headers
+)
 
 class ChapterSummary(BaseModel):
     chapter_summary: str
     summary_option: str
 
+# API for health check
 @app.get("/healthcheck")
 def healthcheck():
     """
@@ -62,7 +77,7 @@ def summarize_with_langchain(chapter_context: str) -> str:
     result = chain.run(docs)
     return result.strip()
 
-
+# API to fetch the chapter contents based on book and chapter selection
 @app.get("/book/{book_name}/chapter/{chapter_name}/contents")
 def fetch_book_contents(book_name : str, chapter_name: str):
     # Get the chapter contents as per selection
@@ -73,7 +88,23 @@ def fetch_book_contents(book_name : str, chapter_name: str):
             crescent_city_db = TinyDB('sm-crescent-city-book-1.json')
     return crescent_city_db.get(Chapter.Name == chapter_name)["Page Content"]
 
+# API to fetch the chapter titles based on book selection
+@app.get("/book/{book_name}/chapters")
+def fetch_chapter_titles(book_name: str):
+    """
+    Fetch chapter titles based on the selected book.
+    """
+    Chapter = Query()
+    if book_name != "Select a Book":
+        if book_name == "Crescent-City-Book-1":
+            crescent_city_db = TinyDB('sm-crescent-city-book-1.json')
+            if crescent_city_db:
+                chapter_docs = crescent_city_db.search(Chapter.Name.exists())
+                if chapter_docs:
+                    return [chapter["Name"] for chapter in chapter_docs]
+    return {"error": "No chapters found for the selected book."}
 
+# API to generate chapter summary based on selected option
 @app.post("/chapter/summary")
 def generate_chapter_summary(summary_with_option: ChapterSummary):
     """

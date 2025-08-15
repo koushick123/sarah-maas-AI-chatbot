@@ -139,8 +139,8 @@ def extract_chapter_summary():
             print(f"Chapter {sec_chap_name} exists in TinyDB")
         else:
             crescent_city_db.insert({
-                "Name":sec_chap_name[sec_chap_name.index("-")+1:].replace(" ",""),
-                "Part": sec_chap_name[:sec_chap_name.index("-")].replace(" ",""),
+                "Name":sec_chap_name[sec_chap_name.index("-")+1:],
+                "Part":sec_chap_name[:sec_chap_name.index("-")],
                 "Page Content": page_content
             })
             print(f"Inserted {sec_chap_name} page contents")
