@@ -7,6 +7,8 @@ from langchain.schema import Document
 from pydantic import BaseModel
 from tinydb import TinyDB, Query
 from fastapi.middleware.cors import CORSMiddleware
+from cryptography.fernet import Fernet
+import os
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -38,6 +40,20 @@ class ChapterSummary(BaseModel):
     chapter_name: str
     chapter_summary: str
     summary_option: str
+
+def decryptopenapi():
+    """
+    Function to decrypt OpenAPI key.
+    """
+    encryptionkey = "f1kneQl7vqezzY8GXWDRLl1cXdImiyQYKVNOf4thQhM="
+    if not encryptionkey:
+        raise ValueError("FERNET_KEY environment variable not set")
+    fernet = Fernet(encryptionkey)
+    with open("encryptedopenapi.txt") as file:
+        encrypted_api = file.read().encode()
+    return fernet.decrypt(encrypted_api).decode()
+
+os.environ["OPENAI_API_KEY"] = decryptopenapi()  # Decrypt the OpenAI API key
 
 # API for health check
 @app.get("/healthcheck")
@@ -114,7 +130,15 @@ def fetch_chapter_titles(book_name: str):
             if crescent_city_db:
                 chapter_docs = crescent_city_db.search(Chapter.Name.exists())
                 if chapter_docs:
-                    return [chapter["Name"] for chapter in chapter_docs]
+                    part_chapter_map = {}
+                    for chapter in chapter_docs:
+                        part = chapter["Part"]
+                        chapter_name = chapter["Name"]
+                        if part not in part_chapter_map:
+                            part_chapter_map[part] = []
+                        part_chapter_map[part].append(chapter_name)
+                    return part_chapter_map
+                    # return [chapter["Name"] for chapter in chapter_docs]
     return {"error": "No chapters found for the selected book."}
 
 # API to save the chapter summary
@@ -165,4 +189,3 @@ def generate_chapter_summary(chapter_content: Chapter):
         return summarize_with_gpt4turbo(chapter_content.chapter_content, chapter_content.summary_option)
     else:
         return {"error": "Invalid summary option selected."}
-
