@@ -46,7 +46,7 @@ def decryptopenapi():
     """
     Function to decrypt OpenAPI key.
     """
-    # encryptionkey = "f1kneQl7vqezzY8GXWDRLl1cXdImiyQYKVNOf4thQhM="
+        # encryptionkey = "f1kneQl7vqezzY8GXWDRLl1cXdImiyQYKVNOf4thQhM="
     encryptionkey = os.environ.get("FERNET_KEY")  # Fetch the encryption key from environment variable
     if not encryptionkey:
         raise ValueError("FERNET_KEY environment variable not set")
@@ -110,6 +110,7 @@ def summarize_with_langchain(chapter_context: str) -> str:
 def fetch_book_contents(book_name : str, chapter_name: str):
     # Get the chapter contents as per selection
     Chapter = Query()
+    chapter_name = chapter_name.replace("-"," ")
     if book_name != "Select a Book" and chapter_name != "Select a Chapter":
         if book_name == "Crescent-City-Book-1":
             crescent_city_db = TinyDB('sm-crescent-city-book-1.json')
@@ -152,7 +153,7 @@ def save_chapter_summary(chapter_summary: ChapterSummary):
     crescent_city_db = TinyDB('sm-crescent-city-book-1-summary.json')
     doc_id = chapter_summary.doc_id
     new_data = {
-        "Name": chapter_summary.chapter_name,
+        "Name": chapter_summary.chapter_name.replace("-"," "),
         "Part": chapter_summary.part,
         "Summary Option": chapter_summary.summary_option,
         "Book Name": chapter_summary.book_name,
@@ -162,7 +163,6 @@ def save_chapter_summary(chapter_summary: ChapterSummary):
     # If you want to insert if not found:
     if not crescent_city_db.get(doc_id=doc_id):
         doc_id = crescent_city_db.insert(new_data)
-        # upsert returns a list of doc_ids
     else:
         crescent_city_db.update(new_data, doc_ids=[doc_id])
 
@@ -170,23 +170,20 @@ def save_chapter_summary(chapter_summary: ChapterSummary):
 
 #API get fetch saved chapter summaries
 @app.post("/chapter/summaries")
-def fetch_chapter_summaries(chapterFromUI: Chapter):
+def fetch_chapter_summaries(chapterFromUI: ChapterSummary):
     """
     Fetch all saved chapter summaries.
     """
     crescent_city_db = TinyDB('sm-crescent-city-book-1-summary.json')
     chapterDetail = Query()
-    # Fetch summares that match a condition
-    # For example, you can fetch all summaries for a specific book or part
-    # Here we are fetching all summaries
-    # If you want to filter by book_name or part, you can modify the query accordingly
-    summary_filter = (chapterDetail.Name == chapterFromUI.chapter_name and chapterDetail["Book Name"] == chapterFromUI.book_name and chapterDetail.Part == chapterFromUI.part
-            and chapterDetail["Summary Option"] == chapterFromUI.summary_option)
-    summaries = crescent_city_db.get(summary_filter)
+    summaries = crescent_city_db.get((chapterDetail["Name"] == chapterFromUI.chapter_name.replace("-"," "))
+                                     & (chapterDetail["Book Name"] == chapterFromUI.book_name)
+                                     & (chapterDetail["Part"] == chapterFromUI.part)
+                                     & (chapterDetail["Summary Option"] == chapterFromUI.summary_option))
     if summaries:
         return {"summary": summaries["Summary"], "doc_id": summaries.doc_id}
     else:
-        return {"summary": "No chapter summaries found."}
+        return {"summary": "No chapter summaries found.", "doc_id": -1}
 
 # API to generate chapter summary based on selected option
 @app.post("/chapter/summary")
@@ -194,11 +191,17 @@ def generate_chapter_summary(chapter_content: Chapter):
     """
     Generate a summary for the given chapter context based on the selected summary option.
     """
+    ChapterQuery = Query()
+    if(chapter_content.book_name == "Crescent-City-Book-1"):
+        crescent_city_db = TinyDB('sm-crescent-city-book-1.json')
+    else:
+        return {"error": "Selected book is not available."}
+    chapter_detail = crescent_city_db.get(ChapterQuery.Name == chapter_content.chapter_name.replace("-"," "))["Page Content"]
     if chapter_content.summary_option == "summary1":
-        return summarize_with_gpt4turbo(chapter_content.chapter_content, chapter_content.summary_option)
+        return summarize_with_gpt4turbo(chapter_detail, chapter_content.summary_option)
     elif chapter_content.summary_option == "summary2":
-        return summarize_with_langchain(chapter_content.chapter_content)
+        return summarize_with_langchain(chapter_detail)
     elif chapter_content.summary_option == "summary3":
-        return summarize_with_gpt4turbo(chapter_content.chapter_content, chapter_content.summary_option)
+        return summarize_with_gpt4turbo(chapter_detail, chapter_content.summary_option)
     else:
         return {"error": "Invalid summary option selected."}
