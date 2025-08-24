@@ -42,7 +42,7 @@ class ChapterSummary(BaseModel):
     summary_option: str
     doc_id: int = None
 
-def decryptopenapi():
+def decryptopenapikey():
     """
     Function to decrypt OpenAPI key.
     """
@@ -55,7 +55,7 @@ def decryptopenapi():
         encrypted_api = file.read().encode()
     return fernet.decrypt(encrypted_api).decode()
 
-os.environ["OPENAI_API_KEY"] = decryptopenapi()  # Decrypt the OpenAI API key
+os.environ["OPENAI_API_KEY"] = decryptopenapikey()  # Decrypt the OpenAI API key
 
 # API for health check
 @app.get("/healthcheck")
