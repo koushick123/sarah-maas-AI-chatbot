@@ -89,7 +89,7 @@ def summarize_with_gpt4turbo(context_chapter_summary, option):
     selected_llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
 
     chain = LLMChain(llm=selected_llm, prompt=chat_prompt)
-    if option == "Summary 1 - Summarize entire chapter using regular ChatGPT":
+    if option == "summary1" or option == "summary2":
         question="Summarize the chapter in detail, focusing on characterisation and plot progression"
     else:
         question="Merge the two summaries into a single coherent summary, focusing on characterisation and plot progression"
