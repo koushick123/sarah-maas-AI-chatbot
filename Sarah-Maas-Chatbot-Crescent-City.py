@@ -73,7 +73,7 @@ def summarize_with_gpt4turbo(context_chapter_summary, option):
         "You are a knowledgeable literary research assistant with deep familiarity "
         "with Sarah J. Maas's *Crescent City* series of books.\n"
         "Focus on offering thoughtful, research-level insight into the text.\n"
-        "Avoid generic filler and do not add introductory phrases."
+        "Avoid generic filler and do not add introductory phrases like 'In this chapter of Crescent City' or anything similar.\n"
     )
 
     chat_prompt = ChatPromptTemplate.from_messages([
@@ -166,6 +166,7 @@ def save_chapter_summary(chapter_summary: ChapterSummary):
     else:
         crescent_city_db.update(new_data, doc_ids=[doc_id])
 
+    print(f"Chapter summary saved with doc_id: {doc_id}")
     return {"message": "Chapter summary saved successfully.", "doc_id": doc_id}
 
 #API get fetch saved chapter summaries
