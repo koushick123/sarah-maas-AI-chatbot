@@ -11,6 +11,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
 from langchain_community.vectorstores import FAISS
+from langchain.schema import Document
 import re
 from tinydb import TinyDB, Query
 
@@ -66,8 +67,22 @@ def store_pdf_as_vector_store(pdf_path, vs_path, book_title, timeline_arc, decon
         loader = PyPDFLoader(pdf_path)
         documents = loader.load()
 
-        # Split the document into smaller chunks
+        full_text = "\n".join([doc.page_content for doc in documents])
+        chapter_texts = re.split(r'(Chapter\s+\d+)', full_text)
+        print(f"chapter length = {len(chapter_texts)}")
+
+        chapter_docs = []
+        for i in range(0, len(chapter_texts)-1):
+            chapter_title = chapter_texts[i]
+            if i + 1 < len(chapter_texts):
+                chapter_body = chapter_texts[i+1]
+            else:
+                chapter_body = None
+            if chapter_body:
+                chapter_docs.append(Document(page_content=chapter_title + "\n" + chapter_body, metadata={"chapter": chapter_title}))
+
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+        split_chapter_docs = text_splitter.split_documents(chapter_docs)
         split_docs = text_splitter.split_documents(documents)
         # Create embeddings for the chunks
         embeddings = OllamaEmbeddings(model=embedding_model)
@@ -99,7 +114,7 @@ def store_pdf_as_vector_store(pdf_path, vs_path, book_title, timeline_arc, decon
         else:
             # Create a vector store from the chunks
             vector_store = FAISS.from_documents(
-                split_docs,
+                split_chapter_docs,
                 embeddings
             )
 
