@@ -1,0 +1,8 @@
+fastapi
+langchain
+langchain_community
+openai
+pydantic
+tinydb
+cryptography
+uvicorn

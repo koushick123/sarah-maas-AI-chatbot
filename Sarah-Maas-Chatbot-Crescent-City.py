@@ -5,6 +5,7 @@ from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain.schema import Document
 from pydantic import BaseModel
+from fastapi.responses import Response
 from tinydb import TinyDB, Query
 from fastapi.middleware.cors import CORSMiddleware
 from cryptography.fernet import Fernet
@@ -41,6 +42,9 @@ class ChapterSummary(BaseModel):
     chapter_summary: str
     summary_option: str
     doc_id: int = None
+
+CRESCENT_CITY_CHAPTERS_FILE = "sm-crescent-city-book-1.json"
+CRESCENT_CITY_SUMMARY_FILE = "sm-crescent-city-book-1-summary.json"
 
 def decryptopenapikey():
     """
@@ -105,6 +109,34 @@ def summarize_with_langchain(chapter_context: str) -> str:
     result = chain.run(docs)
     return result.strip()
 
+@app.get("/logs")
+def read_log_file():
+    """
+    Read the specified log file and return all lines as a list of strings.
+    """
+    try:
+        with open("logfile.txt", "r") as f:
+            lines = f.readlines()
+        html_lines = "This is for logs<br>Line 1:<br>"
+        for line in lines:
+            html_lines += line.replace("\n", "<br>")
+        return Response(content=html_lines.strip(), media_type="text/html")
+    except FileNotFoundError:
+        return {"error": f"Log file logfile.txt not found."}
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.post("/logs/clean")
+def clean_log_file():
+    """
+    Truncate logfile.txt, removing all contents.
+    """
+    try:
+        open("logfile.txt", "w").close()
+        return {"message": "Log file cleaned successfully."}
+    except Exception as e:
+        return {"error": str(e)}
+
 # API to fetch the chapter contents based on book and chapter selection
 @app.get("/book/{book_name}/chapter/{chapter_name}/contents")
 def fetch_book_contents(book_name : str, chapter_name: str):
@@ -113,7 +145,7 @@ def fetch_book_contents(book_name : str, chapter_name: str):
     chapter_name = chapter_name.replace("-"," ")
     if book_name != "Select a Book" and chapter_name != "Select a Chapter":
         if book_name == "Crescent-City-Book-1":
-            crescent_city_db = TinyDB('sm-crescent-city-book-1.json')
+            crescent_city_db = TinyDB(CRESCENT_CITY_CHAPTERS_FILE)
             chapter_summary = crescent_city_db.get(Chapter.Name == chapter_name)["Page Content"]
             if int(chapter_name[chapter_name.index(" "):]) > 9:
                 return chapter_summary[2:]
@@ -129,7 +161,7 @@ def fetch_chapter_titles(book_name: str):
     Chapter = Query()
     if book_name != "Select a Book":
         if book_name == "Crescent-City-Book-1":
-            crescent_city_db = TinyDB('sm-crescent-city-book-1.json')
+            crescent_city_db = TinyDB(CRESCENT_CITY_CHAPTERS_FILE)
             if crescent_city_db:
                 chapter_docs = crescent_city_db.search(Chapter.Name.exists())
                 if chapter_docs:
@@ -150,7 +182,7 @@ def save_chapter_summary(chapter_summary: ChapterSummary):
     """
     Save the chapter summary to the database and return its doc_id.
     """
-    crescent_city_db = TinyDB('sm-crescent-city-book-1-summary.json')
+    crescent_city_db = TinyDB(CRESCENT_CITY_SUMMARY_FILE)
     doc_id = chapter_summary.doc_id
     new_data = {
         "Name": chapter_summary.chapter_name.replace("-"," "),
@@ -175,7 +207,7 @@ def fetch_chapter_summaries(chapterFromUI: ChapterSummary):
     """
     Fetch all saved chapter summaries.
     """
-    crescent_city_db = TinyDB('sm-crescent-city-book-1-summary.json')
+    crescent_city_db = TinyDB(CRESCENT_CITY_SUMMARY_FILE)
     chapterDetail = Query()
     summaries = crescent_city_db.get((chapterDetail["Name"] == chapterFromUI.chapter_name.replace("-"," "))
                                      & (chapterDetail["Book Name"] == chapterFromUI.book_name)
@@ -194,7 +226,7 @@ def generate_chapter_summary(chapter_content: Chapter):
     """
     ChapterQuery = Query()
     if(chapter_content.book_name == "Crescent-City-Book-1"):
-        crescent_city_db = TinyDB('sm-crescent-city-book-1.json')
+        crescent_city_db = TinyDB(CRESCENT_CITY_CHAPTERS_FILE)
     else:
         return {"error": "Selected book is not available."}
     chapter_detail = crescent_city_db.get(ChapterQuery.Name == chapter_content.chapter_name.replace("-"," "))["Page Content"]

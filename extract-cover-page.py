@@ -1,26 +1,23 @@
-import os.path
-from threading import Thread
-
-from langchain.chat_models import ChatOpenAI
-from langchain.chains.summarize import load_summarize_chain
-from pdf2image import convert_from_path
-from langchain_community.document_loaders import PyPDFLoader
-from PyPDF2 import PdfReader, PdfWriter
-from langchain.schema import Document
 import os
+import os.path
+import time
 
-llm = ChatOpenAI(model="gpt-4", temperature=0.1)
+from PyPDF2 import PdfReader, PdfWriter
+from langchain.chains.summarize import load_summarize_chain
+from langchain.chat_models import ChatOpenAI
+from langchain.schema import Document
+from langchain_community.document_loaders import PyPDFLoader
+from pdf2image import convert_from_path
+
+llm = ChatOpenAI(model="chatgpt-4o-latest", temperature=0.1)
 
 def summarize_with_langchain(text: str) -> str:
     # Use LangChain's summarization chain
-    try:
-        print(f"Size of context = {len(text)}")
-        docs = [Document(page_content=text)]
-        chain = load_summarize_chain(llm, chain_type="map_reduce")
-        result = chain.run(docs)
-    except Exception as openaiexcep:
-        print(f"Exception from openAI = {openaiexcep}")
-
+    print(f"Size of context = {len(text)}")
+    docs = [Document(page_content=text)]
+    chain = load_summarize_chain(llm, chain_type="stuff")
+    result = chain.run(docs)
+    time.sleep(61)
     return result.strip()
 
 def extract_cover_page(pdf_path, outputfolderpath, filename, page_number=1):
@@ -94,7 +91,7 @@ def extract_chapter_docs():
 
     return chapter_docs
 
-CHAR_LIMIT = 8192
+CHAR_LIMIT = 500000
 
 def extract_chapter_summary():
     chapter_documents = extract_chapter_docs()
@@ -127,41 +124,43 @@ def extract_chapter_summary():
                 all_page_contents += "\n".join(doc.page_content)
 
     chapter_summary = {}
+    sorted_dict = dict(sorted(chapter_page_content.items(), key=lambda item: len(item[1])))
+    for key, value in sorted_dict.items():
+        print(f"Section = {key}")
+        print(f"Page length = {len(value)}")
 
-    for sec_chap_name, page_content in chapter_page_content.items():
-        if len(page_content) <= CHAR_LIMIT:
-            print(f"Summarizing for {sec_chap_name}")
-            chapter_summary[sec_chap_name] = summarize_with_langchain(page_content)
-        else:
-            # Extract CHAR_LIMIT tokens repeatedly until all done
-            summaries = ""
-            while True:
-                context = page_content[:CHAR_LIMIT]
-                summaries += summarize_with_langchain(context)
+    # for sec_chap_name, page_content in chapter_page_content.items():
+    #     print(f"Section = {sec_chap_name}\n")
+    #     print(f"Page Content = {len(page_content)}\n")
+    #     if len(page_content) <= CHAR_LIMIT:
+    #         print(f"Summarizing for {sec_chap_name}")
+    #         chapter_summary[sec_chap_name] = summarize_with_langchain(page_content)
+    #     else:
+    #         # Extract CHAR_LIMIT tokens repeatedly until all done
+    #         summaries = ""
+    #         while True:
+    #             context = page_content[:CHAR_LIMIT]
+    #             print(f"Summarizing for {sec_chap_name} after truncating to context window size")
+    #             print(f"Sending context size = {len(context)}")
+    #             summaries += summarize_with_langchain(context)
+    #
+    #             # Exclude the first CHAR_LIMIT characters
+    #             page_content = page_content[CHAR_LIMIT:]
+    #             if len(page_content) <= CHAR_LIMIT:
+    #                 break
+    #
+    #         summaries += summarize_with_langchain(page_content)
+    #         print(f"Summary for {sec_chap_name} ==== {summaries} ")
+    #         chapter_summary[sec_chap_name] = summaries
+    #
+    # for doc in chapter_documents:
+    #     doc_chap_name = doc.metadata["Chapter:"]
+    #     doc_section_name = doc.metadata["Section:"]
+    #     doc.metadata["Summary"] = chapter_summary[doc_section_name+"-"+doc_chap_name]
+    #
+    # for doc in chapter_documents:
+    #     print(doc.metadata)
 
-                # Exclude the first CHAR_LIMIT characters
-                page_content = page_content[CHAR_LIMIT:]
-                if len(page_content) <= CHAR_LIMIT:
-                    break
-
-            summaries += summarize_with_langchain(page_content)
-            chapter_summary[sec_chap_name] = summaries
-
-    for doc in chapter_documents:
-        doc_chap_name = doc.metadata["Chapter:"]
-        doc_section_name = doc.metadata["Section:"]
-        doc.metadata["Summary"] = chapter_summary[doc_section_name+"-"+doc_chap_name]
-
-    for doc in chapter_documents:
-        print(doc.metadata)
-
-def safe_summarize(text):
-    while True:
-        try:
-            return summarize_with_langchain(text)
-        except RateLimitError:
-            print("Rate limit exceeded. Waiting 2 seconds before retrying...")
-            time.sleep(2)
 
 if __name__ == "__main__":
     # list all files from pdf_folder
