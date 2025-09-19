@@ -6,13 +6,24 @@ from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, H
 from langchain.schema import Document
 from pydantic import BaseModel
 from fastapi.responses import Response
-from tinydb import TinyDB, Query
 from fastapi.middleware.cors import CORSMiddleware
 from cryptography.fernet import Fernet
 import os
+from pymongo import MongoClient
+import urllib.parse
+from bson import ObjectId
 
 # Initialize FastAPI app
 app = FastAPI()
+
+username = urllib.parse.quote_plus("")
+password = urllib.parse.quote_plus("")
+uri = f"mongodb+srv://{username}:{password}@localhost:27017/?retryWrites=true&w=majority&appName=dev-cluster"
+
+client = MongoClient(uri)
+db = client["sarah-maas-db"]
+collection_books = db["sarah-maas-books"]
+collection_books_summaries = db["sarah-maas-books-summaries"]
 
 # Allow specific origins (replace with your Angular dev server URL)
 origins = [
@@ -41,7 +52,7 @@ class ChapterSummary(BaseModel):
     chapter_name: str
     chapter_summary: str
     summary_option: str
-    doc_id: int = None
+    doc_id: str
 
 CRESCENT_CITY_CHAPTERS_FILE = "sm-crescent-city-book-1.json"
 CRESCENT_CITY_SUMMARY_FILE = "sm-crescent-city-book-1-summary.json"
@@ -140,17 +151,18 @@ def clean_log_file():
 # API to fetch the chapter contents based on book and chapter selection
 @app.get("/book/{book_name}/chapter/{chapter_name}/contents")
 def fetch_book_contents(book_name : str, chapter_name: str):
+    print("Book Name:", book_name)
+    print("Chapter Name:", chapter_name)
     # Get the chapter contents as per selection
-    Chapter = Query()
     chapter_name = chapter_name.replace("-"," ")
     if book_name != "Select a Book" and chapter_name != "Select a Chapter":
         if book_name == "Crescent-City-Book-1":
-            crescent_city_db = TinyDB(CRESCENT_CITY_CHAPTERS_FILE)
-            chapter_summary = crescent_city_db.get(Chapter.Name == chapter_name)["Page Content"]
+            chapter = collection_books.find({"Name": chapter_name})
+            chapter_content = chapter.next().get("Page Content", "No content found for this chapter.")
             if int(chapter_name[chapter_name.index(" "):]) > 9:
-                return chapter_summary[2:]
+                return chapter_content[2:]
             else:
-                return chapter_summary
+                return chapter_content
 
 # API to fetch the chapter and part titles based on book selection
 @app.get("/book/{book_name}/chapters")
@@ -158,48 +170,39 @@ def fetch_chapter_titles(book_name: str):
     """
     Fetch chapter titles based on the selected book.
     """
-    Chapter = Query()
     if book_name != "Select a Book":
         if book_name == "Crescent-City-Book-1":
-            crescent_city_db = TinyDB(CRESCENT_CITY_CHAPTERS_FILE)
-            if crescent_city_db:
-                chapter_docs = crescent_city_db.search(Chapter.Name.exists())
-                if chapter_docs:
-                    part_chapter_map = {}
-                    for chapter in chapter_docs:
-                        part = chapter["Part"]
-                        chapter_name = chapter["Name"]
-                        if part not in part_chapter_map:
-                            part_chapter_map[part] = []
-                        part_chapter_map[part].append(chapter_name)
-                    return part_chapter_map
-                    # return [chapter["Name"] for chapter in chapter_docs]
+            chapter_names = [doc["Name"] for doc in collection_books.find({}, {"Name": 1, "_id": 0})]
+            part_chapter_map = {}
+            for chapter_name in chapter_names:
+                chapter_docs = collection_books.find({"Name": chapter_name.replace("'", "")})
+                doc = chapter_docs.next()
+                part = doc.get("Part")
+                name = doc.get("Name")
+                if part not in part_chapter_map:
+                    part_chapter_map[part] = []
+                part_chapter_map[part].append(name)
+            return part_chapter_map
     return {"error": "No chapters found for the selected book."}
 
 # API to save the chapter summary
 @app.post("/chapter/save")
 def save_chapter_summary(chapter_summary: ChapterSummary):
-    """
-    Save the chapter summary to the database and return its doc_id.
-    """
-    crescent_city_db = TinyDB(CRESCENT_CITY_SUMMARY_FILE)
-    doc_id = chapter_summary.doc_id
     new_data = {
-        "Name": chapter_summary.chapter_name.replace("-"," "),
+        "Name": chapter_summary.chapter_name.replace("-", " "),
         "Part": chapter_summary.part,
         "Summary Option": chapter_summary.summary_option,
         "Book Name": chapter_summary.book_name,
         "Summary": chapter_summary.chapter_summary
     }
-
-    # If you want to insert if not found:
-    if not crescent_city_db.get(doc_id=doc_id):
-        doc_id = crescent_city_db.insert(new_data)
+    if chapter_summary.doc_id:
+        object_id = ObjectId(chapter_summary.doc_id)
+        collection_books_summaries.update_one({"_id": object_id}, {"$set": new_data}, upsert=True)
+        doc_id = chapter_summary.doc_id
     else:
-        crescent_city_db.update(new_data, doc_ids=[doc_id])
-
-    print(f"Chapter summary saved with doc_id: {doc_id}")
-    return {"message": "Chapter summary saved successfully.", "doc_id": doc_id}
+        result = collection_books_summaries.insert_one(new_data)
+        doc_id = result.inserted_id
+    return {"message": "Chapter summary saved successfully.", "doc_id": str(doc_id)}
 
 #API get fetch saved chapter summaries
 @app.post("/chapter/summaries")
@@ -207,34 +210,37 @@ def fetch_chapter_summaries(chapterFromUI: ChapterSummary):
     """
     Fetch all saved chapter summaries.
     """
-    crescent_city_db = TinyDB(CRESCENT_CITY_SUMMARY_FILE)
-    chapterDetail = Query()
-    summaries = crescent_city_db.get((chapterDetail["Name"] == chapterFromUI.chapter_name.replace("-"," "))
-                                     & (chapterDetail["Book Name"] == chapterFromUI.book_name)
-                                     & (chapterDetail["Part"] == chapterFromUI.part)
-                                     & (chapterDetail["Summary Option"] == chapterFromUI.summary_option))
-    if summaries:
-        return {"summary": summaries["Summary"], "doc_id": summaries.doc_id}
+    # Fetch chapter summary from MongoDB
+    query = {
+        "Name": chapterFromUI.chapter_name.replace("-", " "),
+        "Book Name": chapterFromUI.book_name,
+        "Part": chapterFromUI.part,
+        "Summary Option": chapterFromUI.summary_option
+    }
+    summary_doc = collection_books_summaries.find_one(query)
+    if summary_doc:
+        return {"summary": summary_doc.get("Summary", ""), "doc_id": str(summary_doc.get("_id"))}
     else:
-        return {"summary": "No chapter summaries found.", "doc_id": -1}
+        return {"summary": "No chapter summaries found.", "doc_id": "-1"}
 
 # API to generate chapter summary based on selected option
 @app.post("/chapter/summary")
-def generate_chapter_summary(chapter_content: Chapter):
+def generate_chapter_summary(chapter_to_summarize: Chapter):
     """
     Generate a summary for the given chapter context based on the selected summary option.
     """
-    ChapterQuery = Query()
-    if(chapter_content.book_name == "Crescent-City-Book-1"):
-        crescent_city_db = TinyDB(CRESCENT_CITY_CHAPTERS_FILE)
+    if chapter_to_summarize.book_name == "Crescent-City-Book-1":
+        page_content = chapter_to_summarize.chapter_content
+
+        if chapter_to_summarize.summary_option == "summary1":
+            return summarize_with_gpt4turbo(page_content, chapter_to_summarize.summary_option)
+        elif chapter_to_summarize.summary_option == "summary2":
+            return summarize_with_langchain(page_content)
+        elif chapter_to_summarize.summary_option == "summary3":
+            return summarize_with_gpt4turbo(page_content, chapter_to_summarize.summary_option)
+        else:
+            return {"error": "Invalid summary option selected."}
+
     else:
         return {"error": "Selected book is not available."}
-    chapter_detail = crescent_city_db.get(ChapterQuery.Name == chapter_content.chapter_name.replace("-"," "))["Page Content"]
-    if chapter_content.summary_option == "summary1":
-        return summarize_with_gpt4turbo(chapter_detail, chapter_content.summary_option)
-    elif chapter_content.summary_option == "summary2":
-        return summarize_with_langchain(chapter_detail)
-    elif chapter_content.summary_option == "summary3":
-        return summarize_with_gpt4turbo(chapter_detail, chapter_content.summary_option)
-    else:
-        return {"error": "Invalid summary option selected."}
+

@@ -19,3 +19,4 @@ EXPOSE 8000
 
 # Start FastAPI app
 CMD ["sh", "-c", "uvicorn Sarah-Maas-Chatbot-Crescent-City:app --host 0.0.0.0 --port 8000 > logfile.txt 2>&1"]
+#CMD ["sh", "-c", "uvicorn Sarah-Maas-Chatbot-Crescent-City:app --host 0.0.0.0 --port 8000"]
