@@ -16,9 +16,49 @@ from bson import ObjectId
 # Initialize FastAPI app
 app = FastAPI()
 
-username = urllib.parse.quote_plus("")
-password = urllib.parse.quote_plus("")
-uri = f"mongodb+srv://{username}:{password}@localhost:27017/?retryWrites=true&w=majority&appName=dev-cluster"
+def decryptmongopassword():
+    """
+    Function to decrypt MongoDB password.
+    """
+    encryptionkey = os.environ.get("FERNET_KEY_MONGO_PASSWORD")  # Fetch the encryption key from environment variable
+    if not encryptionkey:
+        raise ValueError("FERNET_KEY_MONGO_PASSWORD environment variable not set")
+    fernet = Fernet(encryptionkey)
+    with open("encryptedmongopassword.txt") as file:
+        encrypted_mongo_password = file.read().encode()
+    return fernet.decrypt(encrypted_mongo_password).decode()
+
+
+def decryptmongouser():
+    """
+    Function to decrypt MongoDB username.
+    """
+    encryptionkey = os.environ.get("FERNET_KEY_MONGO_USERNAME")  # Fetch the encryption key from environment variable
+    if not encryptionkey:
+        raise ValueError("FERNET_KEY_MONGO_USERNAME environment variable not set")
+    fernet = Fernet(encryptionkey)
+    with open("encryptedmongouser.txt") as file:
+        encrypted_mongo_password = file.read().encode()
+    return fernet.decrypt(encrypted_mongo_password).decode()
+
+
+def decryptmongohosturl():
+    """
+    Function to decrypt MongoDB host URL.
+    """
+    encryptionkey = os.environ.get("FERNET_KEY_MONGO_HOSTURL")  # Fetch the encryption key from environment variable
+    if not encryptionkey:
+        raise ValueError("FERNET_KEY_MONGO_HOSTURL environment variable not set")
+    fernet = Fernet(encryptionkey)
+    with open("encryptedmongohosturl.txt") as file:
+        encrypted_mongo_hosturl = file.read().encode()
+    return fernet.decrypt(encrypted_mongo_hosturl).decode()
+
+
+username = urllib.parse.quote_plus(decryptmongouser())
+password = urllib.parse.quote_plus(decryptmongopassword())
+host_url = decryptmongohosturl()
+uri = f"mongodb+srv://{username}:{password}@{host_url}/?retryWrites=true&w=majority&appName=dev-cluster"
 
 client = MongoClient(uri)
 db = client["sarah-maas-db"]

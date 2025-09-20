@@ -2,6 +2,8 @@ FROM python:3.11-slim
 
 # Set environment variable for Fernet key
 ENV FERNET_KEY=
+ENV FERNET_KEY_MONGO_USERNAME=
+ENV FERNET_KEY_MONGO_PASSWORD=
 
 # Set working directory
 WORKDIR /app
