@@ -12,15 +12,16 @@ import os
 from pymongo import MongoClient
 import urllib.parse
 from bson import ObjectId
+import requests
 
 # Initialize FastAPI app
 app = FastAPI()
 
-def decryptmongopassword():
+def decrypt_mongo_password():
     """
     Function to decrypt MongoDB password.
     """
-    encryptionkey = os.environ.get("FERNET_KEY_MONGO_PASSWORD")  # Fetch the encryption key from environment variable
+    encryptionkey = fetch_decryption_key_from_vault("FERNET_KEY_MONGO_PASSWORD")  # Fetch the encryption key from Vault
     if not encryptionkey:
         raise ValueError("FERNET_KEY_MONGO_PASSWORD environment variable not set")
     fernet = Fernet(encryptionkey)
@@ -29,11 +30,11 @@ def decryptmongopassword():
     return fernet.decrypt(encrypted_mongo_password).decode()
 
 
-def decryptmongouser():
+def decrypt_mongo_user():
     """
     Function to decrypt MongoDB username.
     """
-    encryptionkey = os.environ.get("FERNET_KEY_MONGO_USERNAME")  # Fetch the encryption key from environment variable
+    encryptionkey = fetch_decryption_key_from_vault("FERNET_KEY_MONGO_USERNAME")  # Fetch the encryption key from Vault
     if not encryptionkey:
         raise ValueError("FERNET_KEY_MONGO_USERNAME environment variable not set")
     fernet = Fernet(encryptionkey)
@@ -42,11 +43,11 @@ def decryptmongouser():
     return fernet.decrypt(encrypted_mongo_password).decode()
 
 
-def decryptmongohosturl():
+def decrypt_mongo_hosturl():
     """
     Function to decrypt MongoDB host URL.
     """
-    encryptionkey = os.environ.get("FERNET_KEY_MONGO_HOSTURL")  # Fetch the encryption key from environment variable
+    encryptionkey = fetch_decryption_key_from_vault("FERNET_KEY_MONGO_HOSTURL")  # Fetch the encryption key from Vault
     if not encryptionkey:
         raise ValueError("FERNET_KEY_MONGO_HOSTURL environment variable not set")
     fernet = Fernet(encryptionkey)
@@ -54,10 +55,26 @@ def decryptmongohosturl():
         encrypted_mongo_hosturl = file.read().encode()
     return fernet.decrypt(encrypted_mongo_hosturl).decode()
 
+VAULT_URL = os.getenv("VAULT_ADDR", "127.0.0.1:8200")  # default to localhost
 
-username = urllib.parse.quote_plus(decryptmongouser())
-password = urllib.parse.quote_plus(decryptmongopassword())
-host_url = decryptmongohosturl()
+
+def fetch_decryption_key_from_vault(key: str) -> str:
+    url = f"https://{VAULT_URL}/v1/sm-secrets/data/openapi_mongodb_credentials"
+    headers = {
+        "accept": "application/json",
+        "X-Vault-Token": ""
+    }
+    cert_path = "vault-droplet/ssl/ca.crt"
+    response = requests.get(url, headers=headers, verify=cert_path)
+    response.raise_for_status()
+    json_data = response.json()
+    key_value = json_data["data"]["data"].get(key)
+    print(f"Fetched value for {key}: {key_value is not None}")
+    return key_value
+
+username = urllib.parse.quote_plus(decrypt_mongo_user())
+password = urllib.parse.quote_plus(decrypt_mongo_password())
+host_url = decrypt_mongo_hosturl()
 uri = f"mongodb+srv://{username}:{password}@{host_url}/?retryWrites=true&w=majority&appName=dev-cluster"
 
 client = MongoClient(uri)
@@ -65,9 +82,11 @@ db = client["sarah-maas-db"]
 collection_books = db["sarah-maas-books"]
 collection_books_summaries = db["sarah-maas-books-summaries"]
 
+UI_ORIGIN_URL = os.getenv("UI_ORIGIN_URL","localhost:4200")
+
 # Allow specific origins (replace with your Angular dev server URL)
 origins = [
-    "http://localhost:4200"  # Angular local dev
+    f"http://localhost:4200"  # Angular local dev
     #"https://your-angular-app.com"  # Prod Angular app
 ]
 
@@ -94,23 +113,20 @@ class ChapterSummary(BaseModel):
     summary_option: str
     doc_id: str
 
-CRESCENT_CITY_CHAPTERS_FILE = "sm-crescent-city-book-1.json"
-CRESCENT_CITY_SUMMARY_FILE = "sm-crescent-city-book-1-summary.json"
 
-def decryptopenapikey():
+def decrypt_openapi_key():
     """
     Function to decrypt OpenAPI key.
     """
-        # encryptionkey = "f1kneQl7vqezzY8GXWDRLl1cXdImiyQYKVNOf4thQhM="
-    encryptionkey = os.environ.get("FERNET_KEY")  # Fetch the encryption key from environment variable
-    if not encryptionkey:
+    encryption_key = os.environ.get("FERNET_KEY")  # Fetch the encryption key from environment variable
+    if not encryption_key:
         raise ValueError("FERNET_KEY environment variable not set")
-    fernet = Fernet(encryptionkey)
+    fernet = Fernet(encryption_key)
     with open("encryptedopenapi.txt") as file:
         encrypted_api = file.read().encode()
     return fernet.decrypt(encrypted_api).decode()
 
-os.environ["OPENAI_API_KEY"] = decryptopenapikey()  # Decrypt the OpenAI API key
+os.environ["OPENAI_API_KEY"] = decrypt_openapi_key()  # Decrypt the OpenAI API key
 
 # API for health check
 @app.get("/healthcheck")
