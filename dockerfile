@@ -3,8 +3,9 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-ENV VAULT_ADDR=https://64.227.147.196:8200
+ENV VAULT_ADDR=64.227.147.196:8200
 ENV UI_ORIGIN_URL=localhost:4200
+ENV VAULT_RETRIEVER_URL=64.227.147.196:8300
 
 # Copy requirements and install dependencies
 COPY requirements.txt .

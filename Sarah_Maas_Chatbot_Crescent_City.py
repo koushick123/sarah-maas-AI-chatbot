@@ -56,13 +56,50 @@ def decrypt_mongo_hosturl():
     return fernet.decrypt(encrypted_mongo_hosturl).decode()
 
 VAULT_URL = os.getenv("VAULT_ADDR", "127.0.0.1:8200")  # default to localhost
+VAULT_RETRIEVER_URL = os.getenv("VAULT_RETRIEVER_URL", "127.0.0.1:8300")
+
+def fetch_vault_token() -> str:
+    """
+    Fetch Vault access token by retrieving VM metadata (vmId, publicKeys)
+    and sending it to the Vault token retrieval service.
+
+    Returns:
+        str: Vault access token if success, or error message if unauthorized.
+    """
+    try:
+        # Fetch VM metadata
+        # Using IMDS metadata service for DigitalOcean. This IP address is non-routable and cannot be accessed externally.
+        vm_id = requests.get("http://169.254.169.254/metadata/v1/id", timeout=5).text.strip()
+        public_keys = requests.get("http://169.254.169.254/metadata/v1/public-keys", timeout=5).text.strip()
+
+        # Vault token retrieval service
+        url = f"http://{VAULT_RETRIEVER_URL}/fetchVaultToken"
+        payload = {
+            "vmId": vm_id,
+            "publicKeys": public_keys
+        }
+        headers = {"Content-Type": "application/json"}
+
+        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        response.raise_for_status()
+
+        data = response.json()
+        if data.get("result") == "success":
+            return data.get("token")
+        else:
+            return f"Error: {data.get('error', 'Unauthorized VM for accessing Vault token')}"
+    except requests.RequestException as e:
+        return f"Request failed: {e}"
 
 
 def fetch_decryption_key_from_vault(key: str) -> str:
     url = f"https://{VAULT_URL}/v1/sm-secrets/data/openapi_mongodb_credentials"
+    vault_token = fetch_vault_token()
+    if vault_token.startswith("Error:") or vault_token.startswith("Request failed:"):
+        raise ValueError(vault_token)
     headers = {
         "accept": "application/json",
-        "X-Vault-Token": ""
+        "X-Vault-Token": vault_token
     }
     cert_path = "vault-droplet/ssl/ca.crt"
     response = requests.get(url, headers=headers, verify=cert_path)
