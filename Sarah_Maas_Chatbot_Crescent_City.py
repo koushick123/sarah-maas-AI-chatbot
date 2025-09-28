@@ -23,7 +23,7 @@ def decrypt_mongo_password():
     """
     encryptionkey = fetch_decryption_key_from_vault("FERNET_KEY_MONGO_PASSWORD")  # Fetch the encryption key from Vault
     if not encryptionkey:
-        raise ValueError("FERNET_KEY_MONGO_PASSWORD environment variable not set")
+        raise ValueError("FERNET_KEY_MONGO_PASSWORD not set")
     fernet = Fernet(encryptionkey)
     with open("encryptedmongopassword.txt") as file:
         encrypted_mongo_password = file.read().encode()
@@ -36,7 +36,7 @@ def decrypt_mongo_user():
     """
     encryptionkey = fetch_decryption_key_from_vault("FERNET_KEY_MONGO_USERNAME")  # Fetch the encryption key from Vault
     if not encryptionkey:
-        raise ValueError("FERNET_KEY_MONGO_USERNAME environment variable not set")
+        raise ValueError("FERNET_KEY_MONGO_USERNAME not set")
     fernet = Fernet(encryptionkey)
     with open("encryptedmongouser.txt") as file:
         encrypted_mongo_password = file.read().encode()
@@ -49,7 +49,7 @@ def decrypt_mongo_hosturl():
     """
     encryptionkey = fetch_decryption_key_from_vault("FERNET_KEY_MONGO_HOSTURL")  # Fetch the encryption key from Vault
     if not encryptionkey:
-        raise ValueError("FERNET_KEY_MONGO_HOSTURL environment variable not set")
+        raise ValueError("FERNET_KEY_MONGO_HOSTURL not set")
     fernet = Fernet(encryptionkey)
     with open("encryptedmongohosturl.txt") as file:
         encrypted_mongo_hosturl = file.read().encode()
@@ -155,9 +155,9 @@ def decrypt_openapi_key():
     """
     Function to decrypt OpenAPI key.
     """
-    encryption_key = os.environ.get("FERNET_KEY")  # Fetch the encryption key from environment variable
+    encryption_key = fetch_decryption_key_from_vault("FERNET_KEY")
     if not encryption_key:
-        raise ValueError("FERNET_KEY environment variable not set")
+        raise ValueError("FERNET_KEY not set")
     fernet = Fernet(encryption_key)
     with open("encryptedopenapi.txt") as file:
         encrypted_api = file.read().encode()
