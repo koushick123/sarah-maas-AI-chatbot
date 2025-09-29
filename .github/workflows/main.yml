@@ -5,7 +5,7 @@ on:
     branches:
       - main   # or change to your deploy branch
     tags:
-      - "v*.*.*"
+      - "v*.*"
 
 jobs:
   build-and-deploy:
