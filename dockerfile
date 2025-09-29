@@ -20,5 +20,4 @@ COPY Sarah_Maas_Chatbot_Crescent_City.py ./sarah_maas_chatbot_crescent_city.py
 EXPOSE 8000
 
 # Start FastAPI app
-CMD ["sh", "-c", "uvicorn sarah_maas_chatbot_crescent_city:app --port 8000 > logfile.txt 2>&1"]
-#CMD ["sh", "-c", "uvicorn sarah_maas_chatbot_crescent_city:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "uvicorn sarah_maas_chatbot_crescent_city:app --host 0.0.0.0 --port 8000"]
