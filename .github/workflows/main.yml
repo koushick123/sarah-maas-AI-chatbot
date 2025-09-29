@@ -45,7 +45,7 @@ jobs:
             echo "Deploying image with tag: $TAG"
       
             docker pull koushick123/sarah-research-assistant:$TAG
-            docker stop chatbot || true
-            docker rm chatbot || true
+            docker stop research-assistant || true
+            docker rm research-assistant || true
             docker run -d --name research-assistant -p 8000:8000 \
               koushick123/sarah-maas-research-assistant:$TAG
