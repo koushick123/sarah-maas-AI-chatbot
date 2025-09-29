@@ -2,8 +2,6 @@ name: Build and Deploy to Digital Ocean VM
 
 on:
   push:
-    branches:
-      - main   # or change to your deploy branch
     tags:
       - "v*.*"
 
@@ -25,7 +23,6 @@ jobs:
 
       # 3. Build & Push Docker image
       - name: Build and Push Docker image
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           IMAGE_NAME=koushick123/sarah-maas-research-assistant
           VERSION=${GITHUB_REF#refs/tags/}
