@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main   # or change to your deploy branch
+    tags:
+      - "v*.*.*"
 
 jobs:
   build-and-deploy:
