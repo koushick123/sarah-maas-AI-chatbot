@@ -10,6 +10,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - set -euo pipefail
+
       # 1. Checkout repo
       - name: Checkout code
         uses: actions/checkout@v4
@@ -42,7 +44,6 @@ jobs:
             echo "Deploying image with tag: $TAG"
       
             docker pull koushick123/sarah-maas-research-assistant:$TAG
-            docker stop research-assistant || true
-            docker rm research-assistant || true
+            docker rm -f research-assistant
             docker run -d --name research-assistant -p 8000:8000 \
               koushick123/sarah-maas-research-assistant:$TAG
