@@ -37,7 +37,7 @@ jobs:
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
           script: |
-            TAG=${GITHUB_REF#refs/tags/}
+            TAG=${{ github.ref_name }}
       
             echo "Deploying image with tag: $TAG"
       
