@@ -42,7 +42,7 @@ jobs:
       
             echo "Deploying image with tag: $TAG"
       
-            docker pull koushick123/sarah-maas-research-assistant:$TAG
             docker rm -f research-assistant
+            docker pull koushick123/sarah-maas-research-assistant:$TAG            
             docker run -d --name research-assistant -p 8000:8000 \
               koushick123/sarah-maas-research-assistant:$TAG
