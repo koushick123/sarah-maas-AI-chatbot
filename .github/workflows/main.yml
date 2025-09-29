@@ -10,8 +10,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - set -euo pipefail
-
       # 1. Checkout repo
       - name: Checkout code
         uses: actions/checkout@v4
@@ -38,7 +36,8 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          script: |
+          script: |            
+            set -euo pipefail
             TAG=${{ github.ref_name }}
       
             echo "Deploying image with tag: $TAG"
