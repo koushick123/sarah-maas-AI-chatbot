@@ -36,7 +36,7 @@ jobs:
           host: ${{ secrets.DO_HOST }}
           username: ${{ secrets.DO_USER }}
           key: ${{ secrets.DO_SSH_KEY }}
-          script: |            
+          script: |
             set -euo pipefail
             TAG=${{ github.ref_name }}
       
@@ -44,5 +44,4 @@ jobs:
       
             docker rm -f research-assistant
             docker pull koushick123/sarah-maas-research-assistant:$TAG            
-            docker run -d --name research-assistant -p 8000:8000 \
-              koushick123/sarah-maas-research-assistant:$TAG
+            docker run -d --name research-assistant-container -p 8000:8000 koushick123/sarah-maas-research-assistant:$TAG
