@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi import FastAPI
 from langchain.chains import LLMChain
 from langchain.chains.summarize import load_summarize_chain
 from langchain.chat_models import ChatOpenAI
@@ -16,6 +17,10 @@ import requests
 
 # Initialize FastAPI app
 app = FastAPI()
+
+UI_ORIGIN_URL = os.getenv("UI_ORIGIN_URL")
+VAULT_ADDR = os.getenv("VAULT_ADDR")
+VAULT_RETRIEVER_ADDR = os.getenv("VAULT_RETRIEVER_ADDR")
 
 def decrypt_mongo_password():
     """
@@ -55,9 +60,6 @@ def decrypt_mongo_hosturl():
         encrypted_mongo_hosturl = file.read().encode()
     return fernet.decrypt(encrypted_mongo_hosturl).decode()
 
-VAULT_URL = os.getenv("VAULT_ADDR", "127.0.0.1:8200")  # default to localhost
-VAULT_RETRIEVER_URL = os.getenv("VAULT_RETRIEVER_URL", "127.0.0.1:8300")
-
 def fetch_vault_token() -> str:
     """
     Fetch Vault access token by retrieving VM metadata (vmId, publicKeys)
@@ -73,7 +75,7 @@ def fetch_vault_token() -> str:
         public_keys = requests.get("http://169.254.169.254/metadata/v1/public-keys", timeout=5).text.strip()
 
         # Vault token retrieval service
-        url = f"http://{VAULT_RETRIEVER_URL}/fetchVaultToken"
+        url = f"http://{VAULT_RETRIEVER_ADDR}/fetchVaultToken"
         payload = {
             "vmId": vm_id,
             "publicKeys": public_keys
@@ -93,7 +95,7 @@ def fetch_vault_token() -> str:
 
 
 def fetch_decryption_key_from_vault(key: str) -> str:
-    url = f"https://{VAULT_URL}/v1/sm-secrets/data/openapi_mongodb_credentials"
+    url = f"https://{VAULT_ADDR}/v1/sm-secrets/data/openapi_mongodb_credentials"
     vault_token = fetch_vault_token()
     if vault_token.startswith("Error:") or vault_token.startswith("Request failed:"):
         raise ValueError(vault_token)
@@ -119,11 +121,9 @@ db = client["sarah-maas-db"]
 collection_books = db["sarah-maas-books"]
 collection_books_summaries = db["sarah-maas-books-summaries"]
 
-UI_ORIGIN_URL = os.getenv("UI_ORIGIN_URL","localhost:4200")
-
 # Allow specific origins (replace with your Angular dev server URL)
 origins = [
-    f"http://localhost:4200"  # Angular local dev
+    f"http://{UI_ORIGIN_URL}"  # Angular local dev
     #"https://your-angular-app.com"  # Prod Angular app
 ]
 
@@ -207,10 +207,12 @@ def summarize_with_gpt4turbo(context_chapter_summary, option):
 # "Summary 2 - Summarize chapter part by part and merge"
 def summarize_with_langchain(chapter_context: str) -> str:
     # Use LangChain's summarization chain
+    print("Using Langchain for summary", chapter_context)
     llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
     docs = [Document(page_content=chapter_context)]
     chain = load_summarize_chain(llm, chain_type="map_reduce")
     result = chain.run(docs)
+    print("Langchain Summary Result:", result)
     return result.strip()
 
 @app.get("/logs")
@@ -288,7 +290,7 @@ def save_chapter_summary(chapter_summary: ChapterSummary):
         "Book Name": chapter_summary.book_name,
         "Summary": chapter_summary.chapter_summary
     }
-    if chapter_summary.doc_id:
+    if chapter_summary.doc_id != "-1":
         object_id = ObjectId(chapter_summary.doc_id)
         collection_books_summaries.update_one({"_id": object_id}, {"$set": new_data}, upsert=True)
         doc_id = chapter_summary.doc_id
