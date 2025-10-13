@@ -1,5 +1,4 @@
 from fastapi import FastAPI
-from fastapi import FastAPI
 from langchain.chains import LLMChain
 from langchain.chains.summarize import load_summarize_chain
 from langchain.chat_models import ChatOpenAI
@@ -13,7 +12,9 @@ import os
 from pymongo import MongoClient
 import urllib.parse
 from bson import ObjectId
+from gridfs import GridFS
 import requests
+from fastapi import File, UploadFile, Form
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -21,6 +22,42 @@ app = FastAPI()
 UI_ORIGIN_URL = os.getenv("UI_ORIGIN_URL")
 VAULT_ADDR = os.getenv("VAULT_ADDR")
 VAULT_RETRIEVER_ADDR = os.getenv("VAULT_RETRIEVER_ADDR")
+
+class Chapter(BaseModel):
+    book_name: str
+    part: str
+    chapter_name: str
+    chapter_content: str
+    summary_option: str
+
+class ChapterSummary(BaseModel):
+    book_name: str
+    part: str
+    chapter_name: str
+    chapter_summary: str
+    summary_option: str
+    doc_id: str
+
+class BookStaging(BaseModel):
+    book_name: str
+    book_id: str
+    pdf_file_id: str  # GridFS file ID
+    file_size: int
+    content_type: str = "application/pdf"
+
+# Allow specific origins (replace with your Angular dev server URL)
+origins = [
+    f"http://{UI_ORIGIN_URL}"  # Angular local dev
+    #"https://your-angular-app.com"  # Prod Angular app
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,            # List of allowed origins
+    allow_credentials=True,           # Allow cookies/auth headers
+    allow_methods=["*"],
+    allow_headers=["*"],               # Allow all headers
+)
 
 def decrypt_mongo_password():
     """
@@ -93,7 +130,6 @@ def fetch_vault_token() -> str:
     except requests.RequestException as e:
         return f"Request failed: {e}"
 
-
 def fetch_decryption_key_from_vault(key: str) -> str:
     url = f"https://{VAULT_ADDR}/v1/sm-secrets/data/openapi_mongodb_credentials"
     vault_token = fetch_vault_token()
@@ -111,46 +147,6 @@ def fetch_decryption_key_from_vault(key: str) -> str:
     print(f"Fetched value for {key}: {key_value is not None}")
     return key_value
 
-username = urllib.parse.quote_plus(decrypt_mongo_user())
-password = urllib.parse.quote_plus(decrypt_mongo_password())
-host_url = decrypt_mongo_hosturl()
-uri = f"mongodb+srv://{username}:{password}@{host_url}/?retryWrites=true&w=majority&appName=dev-cluster"
-
-client = MongoClient(uri)
-db = client["sarah-maas-db"]
-collection_books = db["sarah-maas-books"]
-collection_books_summaries = db["sarah-maas-books-summaries"]
-
-# Allow specific origins (replace with your Angular dev server URL)
-origins = [
-    f"http://{UI_ORIGIN_URL}"  # Angular local dev
-    #"https://your-angular-app.com"  # Prod Angular app
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,            # List of allowed origins
-    allow_credentials=True,           # Allow cookies/auth headers
-    allow_methods=["*"],
-    allow_headers=["*"],               # Allow all headers
-)
-
-class Chapter(BaseModel):
-    book_name: str
-    part: str
-    chapter_name: str
-    chapter_content: str
-    summary_option: str
-
-class ChapterSummary(BaseModel):
-    book_name: str
-    part: str
-    chapter_name: str
-    chapter_summary: str
-    summary_option: str
-    doc_id: str
-
-
 def decrypt_openapi_key():
     """
     Function to decrypt OpenAPI key.
@@ -164,6 +160,19 @@ def decrypt_openapi_key():
     return fernet.decrypt(encrypted_api).decode()
 
 os.environ["OPENAI_API_KEY"] = decrypt_openapi_key()  # Decrypt the OpenAI API key
+
+username = urllib.parse.quote_plus(decrypt_mongo_user())
+password = urllib.parse.quote_plus(decrypt_mongo_password())
+host_url = decrypt_mongo_hosturl()
+uri = f"mongodb+srv://{username}:{password}@{host_url}/?retryWrites=true&w=majority&appName=dev-cluster"
+
+client = MongoClient(uri)
+db = client["sarah-maas-db"]
+collection_books = db["sarah-maas-books"]
+collection_books_summaries = db["sarah-maas-books-summaries"]
+collection_book_staging = db["sarah-maas-books-staging"]
+
+fs = GridFS(db)
 
 # API for health check
 @app.get("/healthcheck")
@@ -339,3 +348,78 @@ def generate_chapter_summary(chapter_to_summarize: Chapter):
     else:
         return {"error": "Selected book is not available."}
 
+
+import uuid
+from datetime import datetime
+
+# API to upload PDF
+@app.post("/book/staging/upload")
+async def upload_book_pdf(book_name: str = Form(...),
+    file: UploadFile = File(...)):
+    """
+    Upload PDF file to GridFS and create staging record.
+    """
+    try:
+        # Read file content
+        file_content = await file.read()
+        # Generate unique book_id
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        unique_id = str(uuid.uuid4())[:8]
+        book_id = f"{book_name.lower().replace(' ', '-')}-{timestamp}-{unique_id}"
+
+        print("Generated Book ID:", book_id)
+        # Store PDF in GridFS
+        file_id = fs.put(
+            file_content,
+            filename=f"{book_id}.pdf",
+            book_id=book_id,
+            content_type="application/pdf"
+        )
+        print("Stored file in GridFS with ID:", file_id)
+
+        # Create staging document
+        document = {
+            "book_name": book_name,
+            "book_id": book_id,
+            "file_id": str(file_id),
+            "file_size": len(file_content),
+            "content_type": "application/pdf"
+        }
+
+        result = collection_book_staging.insert_one(document)
+
+        return {
+            "message": "PDF uploaded successfully",
+            "book_id": book_id,
+            "file_id": str(file_id),
+            "mongo_id": str(result.inserted_id)
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# API to download PDF
+@app.get("/book/staging/{book_id}/download")
+def download_book_pdf(book_id: str):
+    """
+    Download PDF file from GridFS.
+    """
+    try:
+        # Get staging document
+        doc = collection_book_staging.find_one({"book_id": book_id})
+        if not doc:
+            return {"error": "Book not found"}
+
+        # Retrieve PDF from GridFS
+        file_id = ObjectId(doc["file_id"])
+        pdf_file = fs.get(file_id)
+
+        return Response(
+            content=pdf_file.read(),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename={book_id}.pdf"
+            }
+        )
+    except Exception as e:
+        return {"error": str(e)}
