@@ -1,26 +1,29 @@
+import os
+import urllib.parse
+
+import requests
+from bson import ObjectId
+from cryptography.fernet import Fernet
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
+from gridfs import GridFS
 from langchain.chains import LLMChain
 from langchain.chains.summarize import load_summarize_chain
 from langchain.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain.schema import Document
 from pydantic import BaseModel
-from fastapi.responses import Response
-from fastapi.middleware.cors import CORSMiddleware
-from cryptography.fernet import Fernet
-import os
 from pymongo import MongoClient
-import urllib.parse
-from bson import ObjectId
-from gridfs import GridFS
-import requests
-from fastapi import File, UploadFile, Form
+from strands import Agent, tool
+from strands.models.openai import OpenAIModel
 
 # Initialize FastAPI app
 app = FastAPI()
 
 UI_ORIGIN_URL = os.getenv("UI_ORIGIN_URL")
-VAULT_ADDR = os.getenv("VAULT_ADDR")
+#VAULT_ADDR = os.getenv("VAULT_ADDR")
+VAULT_ADDR = "64.227.147.196:8200"
 VAULT_RETRIEVER_ADDR = os.getenv("VAULT_RETRIEVER_ADDR")
 
 class Chapter(BaseModel):
@@ -348,78 +351,322 @@ def generate_chapter_summary(chapter_to_summarize: Chapter):
     else:
         return {"error": "Selected book is not available."}
 
+import json
+import fitz
+from typing import AsyncGenerator, List
+from fastapi.responses import StreamingResponse
 
-import uuid
-from datetime import datetime
+def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500) -> List[str]:
+    """
+    Split text into chunks of specified size with overlap to preserve context.
 
-# API to upload PDF
-@app.post("/book/staging/upload")
-async def upload_book_pdf(book_name: str = Form(...),
-    file: UploadFile = File(...)):
+    Args:
+        text: The full text to chunk
+        chunk_size: Maximum characters per chunk (default 25000 to leave room for instructions)
+        overlap: Number of characters to overlap between chunks for context
+
+    Returns:
+        List of text chunks
     """
-    Upload PDF file to GridFS and create staging record.
+    if len(text) <= chunk_size:
+        return [text]
+
+    chunks = []
+    start = 0
+
+    while start < len(text):
+        end = start + chunk_size
+
+        # If this is not the last chunk, try to break at a paragraph or sentence
+        if end < len(text):
+            # Look for paragraph break
+            paragraph_break = text.rfind('\n\n', start, end)
+            if paragraph_break != -1 and paragraph_break > start + chunk_size // 2:
+                end = paragraph_break
+            else:
+                # Look for sentence break
+                sentence_break = text.rfind('. ', start, end)
+                if sentence_break != -1 and sentence_break > start + chunk_size // 2:
+                    end = sentence_break + 1
+
+        print("Appending chunk:", start, "to", end," with size ",len(text[start:end]))
+        chunks.append(text[start:end])
+
+        # Move start position, accounting for overlap
+        start = end - overlap if end < len(text) else end
+
+    return chunks
+
+
+@tool
+def get_book_chunks(book_id: str, chunk_size: int = 25000) -> dict:
     """
+    Download PDF and return chunked text for analysis.
+    This tool fetches a book PDF, extracts text, and chunks it for processing.
+
+    Args:
+        book_id: The unique identifier of the book to download
+        chunk_size: Maximum characters per chunk
+
+    Returns:
+        Dictionary with chunks, metadata, and chunk info
+    """
+    import tempfile
+
     try:
-        # Read file content
-        file_content = await file.read()
-        # Generate unique book_id
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        unique_id = str(uuid.uuid4())[:8]
-        book_id = f"{book_name.lower().replace(' ', '-')}-{timestamp}-{unique_id}"
+        print(f"🔧 TOOL CALLED: get_book_chunks with book_id={book_id}")
 
-        print("Generated Book ID:", book_id)
-        # Store PDF in GridFS
-        file_id = fs.put(
-            file_content,
-            filename=f"{book_id}.pdf",
-            book_id=book_id,
-            content_type="application/pdf"
-        )
-        print("Stored file in GridFS with ID:", file_id)
-
-        # Create staging document
-        document = {
-            "book_name": book_name,
-            "book_id": book_id,
-            "file_id": str(file_id),
-            "file_size": len(file_content),
-            "content_type": "application/pdf"
-        }
-
-        result = collection_book_staging.insert_one(document)
-
-        return {
-            "message": "PDF uploaded successfully",
-            "book_id": book_id,
-            "file_id": str(file_id),
-            "mongo_id": str(result.inserted_id)
-        }
-    except Exception as e:
-        return {"error": str(e)}
-
-
-# API to download PDF
-@app.get("/book/staging/{book_id}/download")
-def download_book_pdf(book_id: str):
-    """
-    Download PDF file from GridFS.
-    """
-    try:
         # Get staging document
         doc = collection_book_staging.find_one({"book_id": book_id})
         if not doc:
-            return {"error": "Book not found"}
+            return {"error": "Book not found", "success": False}
 
         # Retrieve PDF from GridFS
         file_id = ObjectId(doc["file_id"])
         pdf_file = fs.get(file_id)
+        pdf_binary = pdf_file.read()
 
-        return Response(
-            content=pdf_file.read(),
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename={book_id}.pdf"
+        print(f"📄 PDF fetched, size: {len(pdf_binary)} bytes")
+
+        # Create a temporary file to write the PDF binary
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
+            temp_pdf.write(pdf_binary)
+            temp_pdf_path = temp_pdf.name
+
+        try:
+            # Open PDF using file path with context manager
+            with fitz.open(temp_pdf_path) as pdf_document:
+                full_text = ""
+                page_count = len(pdf_document)
+
+                print(f"📖 Extracting text from {page_count} pages...")
+
+                for page_num in range(page_count):
+                    page = pdf_document[page_num]
+                    full_text += page.get_text() + "\n"
+
+            print(f"✅ Text extracted. Total characters: {len(full_text)}")
+
+            # Chunk the text
+            chunks = chunk_text(full_text, chunk_size)
+            print(f"📦 Text divided into {len(chunks)} chunks")
+
+            return {
+                "chunks": chunks,
+                "total_chunks": len(chunks),
+                "page_count": page_count,
+                "file_name": f"{book_id}.pdf",
+                "file_id": book_id,
+                "total_characters": len(full_text),
+                "success": True
             }
-        )
+
+        finally:
+            # Clean up temporary file
+            import os
+            if os.path.exists(temp_pdf_path):
+                os.unlink(temp_pdf_path)
+
     except Exception as e:
-        return {"error": str(e)}
+        print(f"❌ Error in get_book_chunks tool: {str(e)}")
+        return {
+            "error": str(e),
+            "success": False
+        }
+
+
+# Update agent initialization
+model = OpenAIModel(
+    client_args={
+        "api_key": os.environ["OPENAI_API_KEY"]
+    },
+    model_id="gpt-4o",
+    params={
+        "temperature": 0,
+    }
+)
+
+agent = Agent(
+    model=model,
+    system_prompt=(
+        "You are a book analyzer who will help to understand the structure and format of a book. "
+        "Ignore preface, foreword, introduction, appendices, index, bibliography, and non-text content."
+    ),
+    tools=[get_book_chunks]
+)
+
+
+async def stream_book_analysis(book_id: str) -> AsyncGenerator[str, None]:
+    """
+    Streams the book analysis process in real-time with chunked processing.
+
+    Args:
+        book_id: The ID of the book to analyze
+
+    Yields:
+        Server-Sent Events (SSE) formatted strings with analysis progress
+    """
+    # Multi-step user instruction for chunked analysis with rate limiting
+    user_instruction = f"""
+    Analyze the book with ID: {book_id}
+
+    STEP 1: Call the get_book_chunks tool with book_id="{book_id}" to get the book content in chunks.
+
+    STEP 2: Process chunks in BATCHES to respect rate limits:
+    - Process maximum 5 chunks at a time
+    - Wait 60 seconds between batches
+    - For each chunk, count "Chapter" and "Part" markers
+    - Keep running totals
+
+    STEP 3: After analyzing ALL chunks, provide the final count.
+
+    STEP 4: Return ONLY this JSON format:
+    {{
+        "file_name": "<file_name from tool>",
+        "file_id": "{book_id}",
+        "pages": <page_count from tool>,
+        "chapters": <total chapters across all chunks>,
+        "parts": <total parts across all chunks, or null if none>
+    }}
+
+    IMPORTANT: 
+    - Process chunks in small batches with delays to avoid rate limits
+    - If you encounter rate limit errors, wait and retry
+    - If the book has NO chapters OR NO parts, return: {{"error": "Book does not meet the format"}}
+
+    Begin by calling get_book_chunks now.
+    """
+
+    try:
+        # Send initial status
+        yield f"data: {json.dumps({'status': 'started', 'message': 'Initializing book analysis...'})}\n\n"
+
+        # Send downloading status
+        yield f"data: {json.dumps({'status': 'downloading', 'message': 'Fetching and chunking book content...'})}\n\n"
+
+        # Call agent
+        result = agent(user_instruction)
+
+        # Debug: Log the result object structure
+        yield f"data: {json.dumps({'status': 'debug', 'message': f'Result type: {type(result).__name__}'})}\n\n"
+
+        # Send analyzing status
+        yield f"data: {json.dumps({'status': 'analyzing', 'message': 'Processing chunks and counting markers...'})}\n\n"
+
+        # Extract text from AgentResult
+        accumulated_text = ""
+
+        # Try different approaches to extract result
+        if hasattr(result, 'text') and result.text:
+            accumulated_text = result.text
+            yield f"data: {json.dumps({'status': 'debug', 'message': 'Found result.text'})}\n\n"
+
+        elif hasattr(result, 'content') and result.content:
+            content = result.content
+            if isinstance(content, str):
+                accumulated_text = content
+            elif isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and 'text' in item:
+                        accumulated_text += item['text']
+                    elif hasattr(item, 'text'):
+                        accumulated_text += item.text
+            yield f"data: {json.dumps({'status': 'debug', 'message': 'Found result.content'})}\n\n"
+
+        elif hasattr(result, 'messages') and result.messages:
+            for msg in result.messages:
+                if hasattr(msg, 'content'):
+                    content = msg.content
+                    if isinstance(content, list):
+                        for item in content:
+                            if isinstance(item, dict) and 'text' in item:
+                                accumulated_text += item['text']
+                            elif hasattr(item, 'text'):
+                                accumulated_text += item.text
+                    elif isinstance(content, str):
+                        accumulated_text += content
+            yield f"data: {json.dumps({'status': 'debug', 'message': 'Found result.messages'})}\n\n"
+
+        elif hasattr(result, 'message') and result.message:
+            message = result.message
+            if hasattr(message, 'content'):
+                content = message.content
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict) and 'text' in item:
+                            accumulated_text += item['text']
+                        elif hasattr(item, 'text'):
+                            accumulated_text += item.text
+                        elif isinstance(item, str):
+                            accumulated_text += item
+                elif isinstance(content, str):
+                    accumulated_text = content
+            elif isinstance(message, str):
+                accumulated_text = message
+            yield f"data: {json.dumps({'status': 'debug', 'message': 'Found result.message'})}\n\n"
+
+        else:
+            accumulated_text = str(result)
+            yield f"data: {json.dumps({'status': 'debug', 'message': 'Using str conversion'})}\n\n"
+
+        # Send extracted content preview
+        content_preview = accumulated_text[:1000] if accumulated_text else "NO CONTENT EXTRACTED"
+        yield f"data: {json.dumps({'type': 'text', 'content': content_preview})}\n\n"
+
+        # Process the final accumulated response
+        yield f"data: {json.dumps({'status': 'processing', 'message': 'Parsing results...'})}\n\n"
+
+        result_text = accumulated_text.strip()
+
+        # Try to extract JSON from the response
+        if "```json" in result_text:
+            json_start = result_text.find("```json") + 7
+            json_end = result_text.find("```", json_start)
+            result_text = result_text[json_start:json_end].strip()
+        elif "```" in result_text:
+            json_start = result_text.find("```") + 3
+            json_end = result_text.find("```", json_start)
+            result_text = result_text[json_start:json_end].strip()
+        elif "{" in result_text and "}" in result_text:
+            json_start = result_text.find("{")
+            json_end = result_text.rfind("}") + 1
+            result_text = result_text[json_start:json_end].strip()
+
+        try:
+            # Parse and send final result
+            parsed_result = json.loads(result_text)
+            yield f"data: {json.dumps({'status': 'completed', 'result': parsed_result})}\n\n"
+
+        except json.JSONDecodeError:
+            # Send raw response if parsing fails
+            yield f"data: {json.dumps({'status': 'completed', 'result': {'raw_response': accumulated_text}})}\n\n"
+
+    except Exception as e:
+        # Send error
+        yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
+
+    finally:
+        # Send done signal
+        yield "data: [DONE]\n\n"
+
+
+@app.get("/book/staging/{book_id}/analyze")
+async def book_analysis_agent(book_id: str):
+    """
+    Streams the book analysis process in real-time using Server-Sent Events (SSE).
+
+    Args:
+        book_id: The ID of the book to analyze
+
+    Returns:
+        StreamingResponse with SSE formatted data
+    """
+    return StreamingResponse(
+        stream_book_analysis(book_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        }
+    )
