@@ -20,7 +20,9 @@ from fastapi import File, UploadFile, Form
 app = FastAPI()
 
 UI_ORIGIN_URL = os.getenv("UI_ORIGIN_URL")
-VAULT_ADDR = os.getenv("VAULT_ADDR")
+#VAULT_ADDR = os.getenv("VAULT_ADDR")
+SSL_FLAG = os.getenv("SSL_FLAG", "false")
+VAULT_ADDR = "verbose-space-guide-69pj5p75vrp3pp9-8300.app.github.dev"
 VAULT_RETRIEVER_ADDR = os.getenv("VAULT_RETRIEVER_ADDR")
 
 class Chapter(BaseModel):
@@ -140,7 +142,10 @@ def fetch_decryption_key_from_vault(key: str) -> str:
         "X-Vault-Token": vault_token
     }
     cert_path = "vault-droplet/ssl/ca.crt"
-    response = requests.get(url, headers=headers, verify=cert_path)
+    if SSL_FLAG == "true":
+        response = requests.get(url, headers=headers, verify=cert_path)
+    else:
+        response = requests.get(url, headers=headers)
     response.raise_for_status()
     json_data = response.json()
     key_value = json_data["data"]["data"].get(key)
