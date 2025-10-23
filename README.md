@@ -3,3 +3,7 @@ The sarah-maas-vault is a custom HashiCorp vault setup with credentials needed t
 
 Pre-requisite
 Run sarah-maas-vault as a docker. Refer sarah-maas-vault repo for additional details.
+
+NOTE:
+To run inside codespaces, use **run-sm-app.sh** script, instead of running from VS Code directly.
+The script runs uvicorn Fast API directly without issues.
