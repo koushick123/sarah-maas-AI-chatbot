@@ -22,9 +22,9 @@ from strands.models.openai import OpenAIModel
 app = FastAPI()
 
 UI_ORIGIN_URL = os.getenv("UI_ORIGIN_URL")
-#VAULT_ADDR = os.getenv("VAULT_ADDR")
 SSL_FLAG = os.getenv("SSL_FLAG", "false")
-VAULT_ADDR = "verbose-space-guide-69pj5p75vrp3pp9-8300.app.github.dev"
+# Update VAUTL_ADDR as per Prod if SSL_FLAG is true
+VAULT_ADDR = "<prod-url>"
 VAULT_RETRIEVER_ADDR = os.getenv("VAULT_RETRIEVER_ADDR")
 
 class Chapter(BaseModel):
@@ -135,7 +135,6 @@ def fetch_vault_token() -> str:
         return f"Request failed: {e}"
 
 def fetch_decryption_key_from_vault(key: str) -> str:
-    url = f"https://{VAULT_ADDR}/v1/sm-secrets/data/openapi_mongodb_credentials"
     vault_token = fetch_vault_token()
     if vault_token.startswith("Error:") or vault_token.startswith("Request failed:"):
         raise ValueError(vault_token)
@@ -145,8 +144,10 @@ def fetch_decryption_key_from_vault(key: str) -> str:
     }
     cert_path = "vault-droplet/ssl/ca.crt"
     if SSL_FLAG == "true":
+        url = f"https://{VAULT_ADDR}/v1/sm-secrets/data/openapi_mongodb_credentials"
         response = requests.get(url, headers=headers, verify=cert_path)
     else:
+        url = f"http://localhost:8300/v1/sm-secrets/data/openapi_mongodb_credentials"
         response = requests.get(url, headers=headers)
     response.raise_for_status()
     json_data = response.json()

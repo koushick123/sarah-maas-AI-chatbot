@@ -8,3 +8,4 @@ uvicorn
 pymongo
 requests
 strands-agents
+fitz
