@@ -1,5 +1,10 @@
 import os
 import urllib.parse
+import json
+import fitz
+from typing import AsyncGenerator
+from fastapi.responses import StreamingResponse
+import tempfile
 
 import requests
 from bson import ObjectId
@@ -358,10 +363,6 @@ def generate_chapter_summary(chapter_to_summarize: Chapter):
     else:
         return {"error": "Selected book is not available."}
 
-import json
-import fitz
-from typing import AsyncGenerator, List
-from fastapi.responses import StreamingResponse
 
 
 def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: str = "") -> int:    
@@ -405,21 +406,30 @@ def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: 
                 if sentence_break != -1 and sentence_break > start + chunk_size // 2:
                     end = sentence_break + 1
 
-        chunk_text = text[start:end]
-        print("Appending chunk:", start, "to", end," with size ", len(chunk_text))
+        chunk_text_value = text[start:end]
+        print("Appending chunk:", start, "to", end," with size ", len(chunk_text_value))
         
         # Store chunk in MongoDB if not exists
         if not collection_book_chunks.find_one({"index": chunk_index}):
+            print("Inserting chunk index:", chunk_index)
             collection_book_chunks.insert_one({
                 "index": chunk_index,
                 "book_id": book_id,
-                "chunk": chunk_text
+                "chunk": chunk_text_value
             })
+        else:
+            print("Chunk index already exists:", chunk_index)
         
         chunk_index += 1
 
+        if end < len(text):
+            start = end - overlap
+        else:
+            start = end
+
         # Move start position, accounting for overlap
-        start = end - overlap if end < len(text) else end
+        print("Next start calculation. End:", end, " Len text:", len(text))
+        print("Next start is:", start)
 
     return chunk_index
 
@@ -429,10 +439,10 @@ def get_chunk(index: int) -> str:
     if not book_chunk:
         return f"No Chunk found for index {index}"
 
-    return book_chunk
+    return book_chunk["chunk"]
 
 @tool
-def get_book_chunks(book_id: str, chunk_size: int = 25000) -> dict:
+def get_book_chunks(book_id: str, chunk_size: int = 25000):
     """
     Download PDF and return chunked text for analysis.
     This tool fetches a book PDF, extracts text, and chunks it for processing.
@@ -444,7 +454,6 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000) -> dict:
     Returns:
         Dictionary with chunks, metadata, and chunk info
     """
-    import tempfile
 
     try:
         print(f"🔧 TOOL CALLED: get_book_chunks with book_id={book_id}")
@@ -467,16 +476,20 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000) -> dict:
             temp_pdf_path = temp_pdf.name
 
         try:
-            # Open PDF using file path with context manager
-            with fitz.open(temp_pdf_path) as pdf_document:
+            # Open PDF using file path with PyPDF2
+            with open(temp_pdf_path, "rb") as pdf_document:
                 full_text = ""
-                page_count = len(pdf_document)
-
+                try:
+                    from PyPDF2 import PdfReader
+                except Exception as e:
+                    raise RuntimeError("PyPDF2 is required to extract PDF text: " + str(e))
+                reader = PdfReader(pdf_document)
+                page_count = len(reader.pages)
                 print(f"📖 Extracting text from {page_count} pages...")
-
-                for page_num in range(page_count):
-                    page = pdf_document[page_num]
-                    full_text += page.get_text() + "\n"
+                for page_num in range(int(page_count)):
+                    page = reader.pages[page_num]
+                    page_text = page.extract_text() or ""
+                    full_text += page_text + "\n"
 
             print(f"✅ Text extracted. Total characters: {len(full_text)}")
 
@@ -495,7 +508,6 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000) -> dict:
 
         finally:
             # Clean up temporary file
-            import os
             if os.path.exists(temp_pdf_path):
                 os.unlink(temp_pdf_path)
 
