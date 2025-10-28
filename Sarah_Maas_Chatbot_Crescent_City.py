@@ -26,6 +26,7 @@ SSL_FLAG = os.getenv("SSL_FLAG", "false")
 # Update VAUTL_ADDR as per Prod if SSL_FLAG is true
 VAULT_ADDR = "<prod-url>"
 VAULT_RETRIEVER_ADDR = os.getenv("VAULT_RETRIEVER_ADDR")
+book_chunks: list[str] = []
 
 class Chapter(BaseModel):
     book_name: str
@@ -179,6 +180,7 @@ db = client["sarah-maas-db"]
 collection_books = db["sarah-maas-books"]
 collection_books_summaries = db["sarah-maas-books-summaries"]
 collection_book_staging = db["sarah-maas-books-staging"]
+collection_book_chunks = db["sarah-maas-db.sarah-maas-books-chunk"]
 
 fs = GridFS(db)
 
@@ -361,23 +363,32 @@ import fitz
 from typing import AsyncGenerator, List
 from fastapi.responses import StreamingResponse
 
-def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500) -> List[str]:
+
+def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: str = "") -> int:    
     """
-    Split text into chunks of specified size with overlap to preserve context.
+    Split text into chunks of specified size with overlap to preserve context and store in MongoDB.
 
     Args:
         text: The full text to chunk
         chunk_size: Maximum characters per chunk (default 25000 to leave room for instructions)
         overlap: Number of characters to overlap between chunks for context
+        book_id: The unique identifier of the book
 
     Returns:
-        List of text chunks
+        Count of text chunks
     """
     if len(text) <= chunk_size:
-        return [text]
+        # Store single chunk in MongoDB if not exists
+        if not collection_book_chunks.find_one({"index": 0}):
+            collection_book_chunks.insert_one({
+                "index": 0,
+                "book_id": book_id,
+                "chunk": text
+            })
+        return 1
 
-    chunks = []
     start = 0
+    chunk_index = 0
 
     while start < len(text):
         end = start + chunk_size
@@ -394,14 +405,31 @@ def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500) -> List[s
                 if sentence_break != -1 and sentence_break > start + chunk_size // 2:
                     end = sentence_break + 1
 
-        print("Appending chunk:", start, "to", end," with size ",len(text[start:end]))
-        chunks.append(text[start:end])
+        chunk_text = text[start:end]
+        print("Appending chunk:", start, "to", end," with size ", len(chunk_text))
+        
+        # Store chunk in MongoDB if not exists
+        if not collection_book_chunks.find_one({"index": chunk_index}):
+            collection_book_chunks.insert_one({
+                "index": chunk_index,
+                "book_id": book_id,
+                "chunk": chunk_text
+            })
+        
+        chunk_index += 1
 
         # Move start position, accounting for overlap
         start = end - overlap if end < len(text) else end
 
-    return chunks
+    return chunk_index
 
+@tool
+def get_chunk(index: int) -> str:
+    book_chunk = collection_book_chunks.find_one({"index": index})
+    if not book_chunk:
+        return f"No Chunk found for index {index}"
+
+    return book_chunk
 
 @tool
 def get_book_chunks(book_id: str, chunk_size: int = 25000) -> dict:
@@ -453,12 +481,11 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000) -> dict:
             print(f"✅ Text extracted. Total characters: {len(full_text)}")
 
             # Chunk the text
-            chunks = chunk_text(full_text, chunk_size)
-            print(f"📦 Text divided into {len(chunks)} chunks")
+            chunk_index = chunk_text(full_text, chunk_size, book_id)
+            print(f"📦 Text divided into {(chunk_index+1)} chunks")
 
             return {
-                "chunks": chunks,
-                "total_chunks": len(chunks),
+                "total_chunks": (chunk_index+1),
                 "page_count": page_count,
                 "file_name": f"{book_id}.pdf",
                 "file_id": book_id,
@@ -497,7 +524,7 @@ agent = Agent(
         "You are a book analyzer who will help to understand the structure and format of a book. "
         "Ignore preface, foreword, introduction, appendices, index, bibliography, and non-text content."
     ),
-    tools=[get_book_chunks]
+    tools=[get_book_chunks, get_chunk]
 )
 
 
@@ -514,31 +541,24 @@ async def stream_book_analysis(book_id: str) -> AsyncGenerator[str, None]:
     # Multi-step user instruction for chunked analysis with rate limiting
     user_instruction = f"""
     Analyze the book with ID: {book_id}
+    STEP 1: Call the get_book_chunks tool with book_id="{book_id}" to get the book content in chunks ONLY ONCE. 
+    STEP 2: Start an index = 0
 
-    STEP 1: Call the get_book_chunks tool with book_id="{book_id}" to get the book content in chunks.
-
-    STEP 2: Process chunks in BATCHES to respect rate limits:
-    - Process maximum 5 chunks at a time
-    - Wait 60 seconds between batches
-    - For each chunk, count "Chapter" and "Part" markers
-    - Keep running totals
-
-    STEP 3: After analyzing ALL chunks, provide the final count.
-
-    STEP 4: Return ONLY this JSON format:
+    START LOOP :
+    STEP 3: Retrieve a chunk from get_chunk() by passing index
+    STEP 4: Increment index by 1
+    STEP 5: Find out the number of chapters returned from the get_chunk() into chapter_count with initial value of 0. Each Chapter begins with either "Chapter " or "CHAPTER ".
+    
+    STPE 6: Repeat STEP 3 (START LOOP) to STEP 5 until index = 2. Update the chapter_count. For index > 2 stop and proceed to STEP 7.
+    END LOOP
+    
+    STEP 7: Return ONLY this JSON format:
     {{
         "file_name": "<file_name from tool>",
         "file_id": "{book_id}",
-        "pages": <page_count from tool>,
-        "chapters": <total chapters across all chunks>,
-        "parts": <total parts across all chunks, or null if none>
+        "chapter": <chapter_count>,
+        "pages": <page_count from tool>        
     }}
-
-    IMPORTANT: 
-    - Process chunks in small batches with delays to avoid rate limits
-    - If you encounter rate limit errors, wait and retry
-    - If the book has NO chapters OR NO parts, return: {{"error": "Book does not meet the format"}}
-
     Begin by calling get_book_chunks now.
     """
 
