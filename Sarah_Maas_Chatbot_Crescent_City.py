@@ -1,7 +1,6 @@
 import os
 import urllib.parse
 import json
-import fitz
 from typing import AsyncGenerator
 from fastapi.responses import StreamingResponse
 import tempfile
@@ -486,7 +485,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 reader = PdfReader(pdf_document)
                 page_count = len(reader.pages)
                 print(f"📖 Extracting text from {page_count} pages...")
-                for page_num in range(int(page_count)):
+                for page_num in range(22, int(page_count)):
                     page = reader.pages[page_num]
                     page_text = page.extract_text() or ""
                     full_text += page_text + "\n"
@@ -494,7 +493,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
             print(f"✅ Text extracted. Total characters: {len(full_text)}")
 
             # Chunk the text
-            chunk_index = chunk_text(full_text, chunk_size, book_id)
+            chunk_index = chunk_text(full_text, chunk_size, 200, book_id)
             print(f"📦 Text divided into {(chunk_index+1)} chunks")
 
             return {
@@ -559,9 +558,11 @@ async def stream_book_analysis(book_id: str) -> AsyncGenerator[str, None]:
     START LOOP :
     STEP 3: Retrieve a chunk from get_chunk() by passing index
     STEP 4: Increment index by 1
-    STEP 5: Find out the number of chapters returned from the get_chunk() into chapter_count with initial value of 0. Each Chapter begins with either "Chapter " or "CHAPTER ".
-    
-    STPE 6: Repeat STEP 3 (START LOOP) to STEP 5 until index = 2. Update the chapter_count. For index > 2 stop and proceed to STEP 7.
+    STEP 5: Find out the number of chapters returned from the get_chunk() into chapter_count with initial value of 0. Each Chapter begins with either 
+    "Chapter " or "CHAPTER " or a number on top of a page.
+    STEP 6: Update the chapter_count.
+    STEP 7: Remove the text from get_chunk() called in STEP 3 to ensure rate limit or model context window size is not exceeded.
+    STEP 8: Repeat STEP 3 (START LOOP) to STEP 7 until index = 56. 
     END LOOP
     
     STEP 7: Return ONLY this JSON format:
