@@ -184,7 +184,7 @@ db = client["sarah-maas-db"]
 collection_books = db["sarah-maas-books"]
 collection_books_summaries = db["sarah-maas-books-summaries"]
 collection_book_staging = db["sarah-maas-books-staging"]
-collection_book_chunks = db["sarah-maas-db.sarah-maas-books-chunk"]
+collection_book_chunks = db["sarah-maas-books-chunk"]
 
 fs = GridFS(db)
 
@@ -523,9 +523,9 @@ model = OpenAIModel(
     client_args={
         "api_key": os.environ["OPENAI_API_KEY"]
     },
-    model_id="gpt-4o",
+    model_id="gpt-5-nano",
     params={
-        "temperature": 0,
+        "temperature": 1,
     }
 )
 
@@ -539,7 +539,7 @@ agent = Agent(
 )
 
 
-async def stream_book_analysis(book_id: str) -> AsyncGenerator[str, None]:
+async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[str, None]:
     """
     Streams the book analysis process in real-time with chunked processing.
 
@@ -548,29 +548,43 @@ async def stream_book_analysis(book_id: str) -> AsyncGenerator[str, None]:
 
     Yields:
         Server-Sent Events (SSE) formatted strings with analysis progress
+        :param book_id:
+        :param chunk_size:
     """
     # Multi-step user instruction for chunked analysis with rate limiting
     user_instruction = f"""
     Analyze the book with ID: {book_id}
-    STEP 1: Call the get_book_chunks tool with book_id="{book_id}" to get the book content in chunks ONLY ONCE. 
-    STEP 2: Start an index = 0
+    STEP 0: Call the get_book_chunks tool with book_id="{book_id}" to get the book content in chunks ONLY ONCE. 
+    STEP 1: Start an index = -1
 
     START LOOP :
-    STEP 3: Retrieve a chunk from get_chunk() by passing index
-    STEP 4: Increment index by 1
-    STEP 5: Find out the number of chapters returned from the get_chunk() into chapter_count with initial value of 0. Each Chapter begins with either 
-    "Chapter " or "CHAPTER " or a number on top of a page.
-    STEP 6: Update the chapter_count.
-    STEP 7: Remove the text from get_chunk() called in STEP 3 to ensure rate limit or model context window size is not exceeded.
-    STEP 8: Repeat STEP 3 (START LOOP) to STEP 7 until index = 56. 
+    STEP 2: Set chapter_count with initial value of 0, part_count with initial value of 0.
+    STEP 3: Increment index by 1
+    STEP 4: Retrieve a chunk from get_chunk() by passing index
+    STEP 5: If (index >= 7 AND (index % 7 is 0 OR index >= {chunk_size})), go to ANALYZER, else continue to STEP 3.
+    
+    ANALYZER: 
+    1. Find out the number of chapters returned from the get_chunk() into chapter_count. Each Chapter begins with either "Chapter " or "CHAPTER " 
+    or a number that is underlined, or a number that is highlighted in color.
+    2. Update the chapter_count.
+    3. Find out the number of parts returned from the get_chunk() into part_count. Each Part begins with either "Part " or "PART " or "Section" or "SECTION".
+    4. Update the part_count.
+    5. If (index >= {chunk_size}) , populate the last_chunk with text from get_chunk().
+    
+    STEP 7: Remove all the text retrieved from get_chunk() called from STEP 3 from user instruction 
+    passed to LLM to ensure rate limit or model context window size is not exceeded.
+    STEP 8: Wait for 1 minute.
+    STEP 9: Repeat STEP 3 (START LOOP) to STEP 8 until index = {chunk_size}.
     END LOOP
     
-    STEP 7: Return ONLY this JSON format:
+    STEP 10: Return ONLY this JSON format:
     {{
         "file_name": "<file_name from tool>",
         "file_id": "{book_id}",
-        "chapter": <chapter_count>,
-        "pages": <page_count from tool>        
+        "chapters": <chapter_count>,
+        "parts": <part_count>,
+        "pages": <page_count from tool>,
+        "last_chunk": <last_chunk>",
     }}
     Begin by calling get_book_chunks now.
     """
@@ -700,7 +714,7 @@ async def book_analysis_agent(book_id: str):
         StreamingResponse with SSE formatted data
     """
     return StreamingResponse(
-        stream_book_analysis(book_id),
+        stream_book_analysis(book_id,21),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
