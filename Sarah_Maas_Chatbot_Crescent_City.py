@@ -105,6 +105,7 @@ def decrypt_mongo_hosturl():
         encrypted_mongo_hosturl = file.read().encode()
     return fernet.decrypt(encrypted_mongo_hosturl).decode()
 
+
 def fetch_vault_token() -> str:
     """
     Fetch Vault access token by retrieving VM metadata (vmId, publicKeys)
@@ -138,6 +139,7 @@ def fetch_vault_token() -> str:
     except requests.RequestException as e:
         return f"Request failed: {e}"
 
+
 def fetch_decryption_key_from_vault(key: str) -> str:
     vault_token = fetch_vault_token()
     if vault_token.startswith("Error:") or vault_token.startswith("Request failed:"):
@@ -158,6 +160,7 @@ def fetch_decryption_key_from_vault(key: str) -> str:
     key_value = json_data["data"]["data"].get(key)
     print(f"Fetched value for {key}: {key_value is not None}")
     return key_value
+
 
 def decrypt_openapi_key():
     """
@@ -227,6 +230,7 @@ def summarize_with_gpt4turbo(context_chapter_summary, option):
 
     return chain.run(context=context_chapter_summary, question=question).strip()
 
+
 # "Summary 2 - Summarize chapter part by part and merge"
 def summarize_with_langchain(chapter_context: str) -> str:
     # Use LangChain's summarization chain
@@ -237,6 +241,7 @@ def summarize_with_langchain(chapter_context: str) -> str:
     result = chain.run(docs)
     print("Langchain Summary Result:", result)
     return result.strip()
+
 
 @app.get("/logs")
 def read_log_file():
@@ -266,6 +271,7 @@ def clean_log_file():
     except Exception as e:
         return {"error": str(e)}
 
+
 # API to fetch the chapter contents based on book and chapter selection
 @app.get("/book/{book_name}/chapter/{chapter_name}/contents")
 def fetch_book_contents(book_name : str, chapter_name: str):
@@ -281,6 +287,7 @@ def fetch_book_contents(book_name : str, chapter_name: str):
                 return chapter_content[2:]
             else:
                 return chapter_content
+
 
 # API to fetch the chapter and part titles based on book selection
 @app.get("/book/{book_name}/chapters")
@@ -303,6 +310,7 @@ def fetch_chapter_titles(book_name: str):
             return part_chapter_map
     return {"error": "No chapters found for the selected book."}
 
+
 # API to save the chapter summary
 @app.post("/chapter/save")
 def save_chapter_summary(chapter_summary: ChapterSummary):
@@ -322,6 +330,7 @@ def save_chapter_summary(chapter_summary: ChapterSummary):
         doc_id = result.inserted_id
     return {"message": "Chapter summary saved successfully.", "doc_id": str(doc_id)}
 
+
 #API get fetch saved chapter summaries
 @app.post("/chapter/summaries")
 def fetch_chapter_summaries(chapterFromUI: ChapterSummary):
@@ -340,6 +349,7 @@ def fetch_chapter_summaries(chapterFromUI: ChapterSummary):
         return {"summary": summary_doc.get("Summary", ""), "doc_id": str(summary_doc.get("_id"))}
     else:
         return {"summary": "No chapter summaries found.", "doc_id": "-1"}
+
 
 # API to generate chapter summary based on selected option
 @app.post("/chapter/summary")
@@ -361,7 +371,6 @@ def generate_chapter_summary(chapter_to_summarize: Chapter):
 
     else:
         return {"error": "Selected book is not available."}
-
 
 
 def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: str = "") -> int:    
@@ -434,6 +443,8 @@ def get_chunk(index: int) -> str:
 
     return book_chunk["chunk"]
 
+
+@app.get("/book/staging/{book_id}/chunks")
 @tool
 def get_book_chunks(book_id: str, chunk_size: int = 25000):
     """
@@ -475,43 +486,50 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 temp_pdf_path = temp_pdf.name
 
             try:
+                from PyPDF2 import PdfReader
+            except Exception as e:
+                raise RuntimeError("PyPDF2 is required to extract PDF text: " + str(e))
+
+            try:
                 # Open PDF using file path with PyPDF2
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
-                    try:
-                        from PyPDF2 import PdfReader
-                    except Exception as e:
-                        raise RuntimeError("PyPDF2 is required to extract PDF text: " + str(e))
                     reader = PdfReader(pdf_document)
                     page_count = len(reader.pages)
-                    print(f"📖 Extracting text from {page_count} pages...")
-                    for page_num in range(22, int(page_count)):
+                    print("Extract text from PDF...")
+                    for page_num in range(int(page_count)):
                         page = reader.pages[page_num]
                         page_text = page.extract_text() or ""
-                        full_text += page_text + "\n"
+                        page_is_first_chap_obj = json.loads(identify_page_for_first_chapter(page_text))
+                        if page_is_first_chap_obj["first_chapter_page"]:
+                            first_page_num = page_num
+                            break
 
+                print("First page object:", first_page_num)
                 print(f"✅ Text extracted. Total characters: {len(full_text)}")
+                print(f"First chapter starts on page: {first_page_num}")
+                print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
+
+                reader_for_full_text = PdfReader(pdf_document)
+                for page_num in range(first_page_num, int(page_count)):
+                    page = reader_for_full_text.pages[page_num]
+                    full_text = page.extract_text() or ""
 
                 # Chunk the text
                 chunk_index = chunk_text(full_text, chunk_size, 200, book_id)
                 print(f"📦 Text divided into {(chunk_index+1)} chunks")
 
-                collection_book_chunk_metadata.insert_one({
+                book_metadata = {
                     "file_id": book_id,
                     "file_name": f"{book_id}.pdf",
                     "page_count": page_count,
-                    "total_chunks": (chunk_index + 1),
-                    "total_characters": len(full_text)
-                })
-
-                return {
-                    "file_id": book_id,
-                    "file_name": f"{book_id}.pdf",
-                    "page_count": page_count,
+                    "page_for_first_chapter": first_page_num,
                     "total_chunks": (chunk_index + 1),
                     "total_characters": len(full_text)
                 }
 
+                collection_book_chunk_metadata.insert_one(book_metadata)
+                return book_metadata
             finally:
                 # Clean up temporary file
                 if os.path.exists(temp_pdf_path):
@@ -547,6 +565,55 @@ agent = Agent(
 
 import re
 
+
+def identify_page_for_first_chapter(page_value: str):
+    """
+    Identify the page number where the first chapter starts.
+
+    Args:
+        page_value: Page contents to analyze
+
+    Returns:
+        Page number of the first chapter or -1 if not found
+    """
+    system_instruction = """
+    You are a book analyzer tasked with identifying the page number where the first chapter begins.
+    You MUST respond with valid JSON only, no additional text.
+    """
+
+    # FIXED: Remove f-string, keep as regular string with template variable
+    user_instruction = """
+    Inside {page_value} check if the corresponding value contains indicators of a chapter start.
+    The {page_value} can start with "Chapter ", OR "CHAPTER ", OR a number, OR a roman number, OR number in text that is underlined or highlighted in color OR both.
+    Exclude {page_value} that are part of the table of contents or any introductory sections, any preface, foreword, introduction, appendices, index, bibliography, 
+    and non-text content.
+    Return true where the first chapter starts. If no chapter start is found, return false.
+    After first chapter is found, ignore all subsequent chapters and send output as per below format.
+    OUTPUT SHOULD BE ONLY BE IN BELOW JSON FORMAT (no markdown, no code blocks, no extra text):
+    {{
+        "first_chapter_page": <true or false>, 
+        "error": <any error messages encountered during analysis or null>
+    }}
+    """
+
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(system_instruction),
+        HumanMessagePromptTemplate.from_template(user_instruction),
+    ])
+
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=1)  # Fixed model name
+    chain = LLMChain(llm=llm, prompt=prompt)
+
+    try:
+        result = chain.run(page_value=page_value).strip()
+        print(f"Raw LLM response: {result}")
+        print(f"Response type: {type(result)}")
+        return result
+    except Exception as e:
+        print(f"Error during chain.run(): {type(e).__name__}: {str(e)}")
+        raise
+
+
 async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[str, None]:
     """
     Streams the book analysis process in real-time with chunked processing.
@@ -578,22 +645,20 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
     2. Update the chapter_count.
     3. Find out the number of parts returned from the get_chunk() into part_count. Each Part begins with either "Part " or "PART " or "Section" or "SECTION".
     4. Update the part_count.
-    5. If (index >= {chunk_size}) , populate the last_chunk with text from get_chunk().
 
-    STEP 7: Remove all the text retrieved from get_chunk() called from STEP 3 from user instruction 
+    STEP 6: Remove all the text retrieved from get_chunk() called from STEP 3 from user instruction 
     passed to LLM to ensure rate limit or model context window size is not exceeded.
-    STEP 8: Wait for 1 minute.
-    STEP 9: Repeat STEP 3 (START LOOP) to STEP 8 until index = {chunk_size}.
+    STEP 7: Wait for 1 minute.
+    STEP 8: Repeat STEP 3 (START LOOP) to STEP 7 until index = {chunk_size}.
     END LOOP
 
-    STEP 10: Return ONLY this JSON format:
+    STEP 9: Return ONLY this JSON format:
     {{
         "file_name": "<file_name from tool>",
         "file_id": "{book_id}",
         "chapters": <chapter_count>,
         "parts": <part_count>,
         "pages": <page_count from tool>,
-        "last_chunk": "<last_chunk text if any>",
         "error": <any error messages encountered during analysis or null>
     }}
     Begin by calling get_book_chunks now.
@@ -660,7 +725,7 @@ async def book_analysis_agent(book_id: str):
         StreamingResponse with SSE formatted data
     """
     return StreamingResponse(
-        stream_book_analysis(book_id,21),
+        stream_book_analysis(book_id,56),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
