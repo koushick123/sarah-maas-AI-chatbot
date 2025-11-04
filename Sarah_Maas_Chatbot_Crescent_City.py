@@ -465,7 +465,10 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
 
         book_doc = collection_book_chunk_metadata.find_one({"file_id": book_id})
         if book_doc:
-            print(f"✅ Book chunks already exist. Returning existing metadata. {book_doc}")
+            # Convert ObjectId fields to strings
+            for key, value in book_doc.items():
+                if isinstance(value, ObjectId):
+                    book_doc[key] = str(value)
             return book_doc
         else:
             # Get staging document
@@ -502,20 +505,20 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         page_text = page.extract_text() or ""
                         page_is_first_chap_obj = json.loads(identify_page_for_first_chapter(page_text))
                         if page_is_first_chap_obj["first_chapter_page"]:
-                            first_page_num = page_num
+                            first_page_num = page_num + 1
                             break
 
-                print("First page object:", first_page_num)
-                print(f"✅ Text extracted. Total characters: {len(full_text)}")
                 print(f"First chapter starts on page: {first_page_num}")
                 print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
 
-                reader_for_full_text = PdfReader(pdf_document)
-                for page_num in range(first_page_num, int(page_count)):
-                    page = reader_for_full_text.pages[page_num]
-                    full_text = page.extract_text() or ""
+                with open(temp_pdf_path, "rb") as pdf_document:
+                    reader_for_full_text = PdfReader(pdf_document)
+                    for page_num in range(first_page_num, int(page_count)):
+                        page = reader_for_full_text.pages[page_num]
+                        full_text += page.extract_text() or ""
 
                 # Chunk the text
+                print(f"Size of full text to chunk: {len(full_text)} characters")
                 chunk_index = chunk_text(full_text, chunk_size, 200, book_id)
                 print(f"📦 Text divided into {(chunk_index+1)} chunks")
 
@@ -529,6 +532,9 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 }
 
                 collection_book_chunk_metadata.insert_one(book_metadata)
+                for key, value in book_metadata.items():
+                    if isinstance(value, ObjectId):
+                        book_metadata[key] = str(value)
                 return book_metadata
             finally:
                 # Clean up temporary file
@@ -581,14 +587,32 @@ def identify_page_for_first_chapter(page_value: str):
     You MUST respond with valid JSON only, no additional text.
     """
 
-    # FIXED: Remove f-string, keep as regular string with template variable
     user_instruction = """
-    Inside {page_value} check if the corresponding value contains indicators of a chapter start.
-    The {page_value} can start with "Chapter ", OR "CHAPTER ", OR a number, OR a roman number, OR number in text that is underlined or highlighted in color OR both.
-    Exclude {page_value} that are part of the table of contents or any introductory sections, any preface, foreword, introduction, appendices, index, bibliography, 
-    and non-text content.
-    Return true where the first chapter starts. If no chapter start is found, return false.
-    After first chapter is found, ignore all subsequent chapters and send output as per below format.
+    1. EXCLUDE {page_value} if contents are any of below:
+        1.1 non text (like binary or an image or table etc).
+        1.2 table of contents
+        1.3 introductory sections
+        1.4 any preface 
+        1.5 foreword 
+        1.6 introduction
+        1.7 appendices
+        1.8 index
+        1.9 bibliography
+        1.10 epilogue
+        1.11 contents
+        1.12 Multiple occurrences of chapter without any text
+    return false
+    2. Inside {page_value} check for below:
+     2.1 Chapter
+     2.2 CHAPTER
+     2.3 number
+     2.4 roman number
+     2.5 number in text that is underlined 
+     2.6 highlighted in color
+     2.7 both 2.5 & 2.6
+    The {page_value} SHOULD HAVE any combination from 2.1 to 2.7 above AND MUST BE FOLLOWED BY TEXT. NO MULTIPLE OCCURRENCES OF CHAPTER WITHOUT ANY TEXT.
+    ONLY IF ABOVE IS SATISFIED, return true, else false.
+    3. If return true, exit the analysis and do not check further pages.
     OUTPUT SHOULD BE ONLY BE IN BELOW JSON FORMAT (no markdown, no code blocks, no extra text):
     {{
         "first_chapter_page": <true or false>, 
@@ -601,13 +625,11 @@ def identify_page_for_first_chapter(page_value: str):
         HumanMessagePromptTemplate.from_template(user_instruction),
     ])
 
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=1)  # Fixed model name
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     chain = LLMChain(llm=llm, prompt=prompt)
 
     try:
         result = chain.run(page_value=page_value).strip()
-        print(f"Raw LLM response: {result}")
-        print(f"Response type: {type(result)}")
         return result
     except Exception as e:
         print(f"Error during chain.run(): {type(e).__name__}: {str(e)}")
