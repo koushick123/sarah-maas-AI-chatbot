@@ -496,14 +496,18 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
             try:
                 # Open PDF using file path with PyPDF2
                 with open(temp_pdf_path, "rb") as pdf_document:
-                    full_text = ""
                     reader = PdfReader(pdf_document)
                     page_count = len(reader.pages)
                     print("Extract text from PDF...")
                     for page_num in range(int(page_count)):
+                        if page_num > 30:
+                            return {"error": "Page number exceeded 30. Please revise the prompt to find page number for first chapter.", "success": False}
                         page = reader.pages[page_num]
+                        print(f"Page number: {page_num + 1}")
                         page_text = page.extract_text() or ""
+                        print(f"Page Text ====== {page_text[:100]}")
                         page_is_first_chap_obj = json.loads(identify_page_for_first_chapter(page_text))
+                        print(f"First chapter page check result: {page_is_first_chap_obj}")
                         if page_is_first_chap_obj["first_chapter_page"]:
                             first_page_num = page_num + 1
                             break
@@ -512,6 +516,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
 
                 with open(temp_pdf_path, "rb") as pdf_document:
+                    full_text = ""
                     reader_for_full_text = PdfReader(pdf_document)
                     for page_num in range(first_page_num, int(page_count)):
                         page = reader_for_full_text.pages[page_num]
@@ -588,30 +593,19 @@ def identify_page_for_first_chapter(page_value: str):
     """
 
     user_instruction = """
-    1. EXCLUDE {page_value} if contents are any of below:
-        1.1 non text (like binary or an image or table etc).
-        1.2 table of contents
-        1.3 introductory sections
-        1.4 any preface 
-        1.5 foreword 
-        1.6 introduction
-        1.7 appendices
-        1.8 index
-        1.9 bibliography
-        1.10 epilogue
-        1.11 contents
-        1.12 Multiple occurrences of chapter without any text
-    return false
-    2. Inside {page_value} check for below:
+     1. For {page_value} contents check for below conditions:
+ CONDITIONS:
+     CONDITION 1: THE FIRST CHARACTER SHOULD BE ANY ONE OR A COMBINATION OF OCCURRENCE OF BELOW:
      2.1 Chapter
      2.2 CHAPTER
      2.3 number
      2.4 roman number
-     2.5 number in text that is underlined 
-     2.6 highlighted in color
-     2.7 both 2.5 & 2.6
-    The {page_value} SHOULD HAVE any combination from 2.1 to 2.7 above AND MUST BE FOLLOWED BY TEXT. NO MULTIPLE OCCURRENCES OF CHAPTER WITHOUT ANY TEXT.
-    ONLY IF ABOVE IS SATISFIED, return true, else false.
+     2.5 number in text (case insensitive)
+     
+     CONDITION 2: CONDITION 1 SHOULD OCCUR EXACTLY ONCE ONLY
+     
+    ONLY IF CONDITION 1 AND CONDITION 2 ARE SATISFIED, return true, else false.
+
     3. If return true, exit the analysis and do not check further pages.
     OUTPUT SHOULD BE ONLY BE IN BELOW JSON FORMAT (no markdown, no code blocks, no extra text):
     {{
