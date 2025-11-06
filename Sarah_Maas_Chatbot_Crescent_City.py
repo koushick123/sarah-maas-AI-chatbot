@@ -187,7 +187,7 @@ collection_books = db["sarah-maas-books"]
 collection_books_summaries = db["sarah-maas-books-summaries"]
 collection_book_staging = db["sarah-maas-books-staging"]
 collection_book_chunks = db["sarah-maas-books-chunk"]
-collection_book_chunk_metadata = db["sarah-maas-books-chunk-metadata"]
+collection_book_chunk_metadata = db["sarah-maas-books-metadata"]
 
 fs = GridFS(db)
 
@@ -500,16 +500,24 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     page_count = len(reader.pages)
                     print("Extract text from PDF...")
                     for page_num in range(int(page_count)):
-                        if page_num > 30:
-                            return {"error": "Page number exceeded 30. Please revise the prompt to find page number for first chapter.", "success": False}
+                        firstindex = lastindex = -1
+                        if page_num > 20:
+                            # Set page_num as 20 as an approximation, since we will not be able to
+                            # find out the exact page number.
+                            print("Analyzed more than 20 pages. Setting page num as 20 and exiting.")
+                            first_page_num = 20
+                            break
                         page = reader.pages[page_num]
                         print(f"Page number: {page_num + 1}")
                         page_text = page.extract_text() or ""
-                        print(f"Page Text ====== {page_text[:100]}")
-                        page_is_first_chap_obj = json.loads(identify_page_for_first_chapter(page_text))
-                        print(f"First chapter page check result: {page_is_first_chap_obj}")
-                        if page_is_first_chap_obj["first_chapter_page"]:
-                            first_page_num = page_num + 1
+                        print(f"Page Text ====== {page_text[:50]}")
+                        firstindex = page_text.lower().find("chapter")
+                        print(f"First index of chapter = {firstindex}")
+                        lastindex = page_text.lower().rfind("chapter")
+                        print(f"Last index of chapter = {lastindex}")
+                        if(firstindex != -1 and lastindex != -1) and (firstindex == lastindex):
+                            first_page_num = page_num
+                            print(f"First page number = {first_page_num}")
                             break
 
                 print(f"First chapter starts on page: {first_page_num}")
@@ -524,7 +532,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
 
                 # Chunk the text
                 print(f"Size of full text to chunk: {len(full_text)} characters")
-                chunk_index = chunk_text(full_text, chunk_size, 200, book_id)
+                chunk_index = chunk_text(full_text, chunk_size, 100, book_id)
                 print(f"📦 Text divided into {(chunk_index+1)} chunks")
 
                 book_metadata = {
@@ -575,60 +583,6 @@ agent = Agent(
 )
 
 import re
-
-
-def identify_page_for_first_chapter(page_value: str):
-    """
-    Identify the page number where the first chapter starts.
-
-    Args:
-        page_value: Page contents to analyze
-
-    Returns:
-        Page number of the first chapter or -1 if not found
-    """
-    system_instruction = """
-    You are a book analyzer tasked with identifying the page number where the first chapter begins.
-    You MUST respond with valid JSON only, no additional text.
-    """
-
-    user_instruction = """
-     1. For {page_value} contents check for below conditions:
- CONDITIONS:
-     CONDITION 1: THE FIRST CHARACTER SHOULD BE ANY ONE OR A COMBINATION OF OCCURRENCE OF BELOW:
-     2.1 Chapter
-     2.2 CHAPTER
-     2.3 number
-     2.4 roman number
-     2.5 number in text (case insensitive)
-     
-     CONDITION 2: CONDITION 1 SHOULD OCCUR EXACTLY ONCE ONLY
-     
-    ONLY IF CONDITION 1 AND CONDITION 2 ARE SATISFIED, return true, else false.
-
-    3. If return true, exit the analysis and do not check further pages.
-    OUTPUT SHOULD BE ONLY BE IN BELOW JSON FORMAT (no markdown, no code blocks, no extra text):
-    {{
-        "first_chapter_page": <true or false>, 
-        "error": <any error messages encountered during analysis or null>
-    }}
-    """
-
-    prompt = ChatPromptTemplate.from_messages([
-        SystemMessagePromptTemplate.from_template(system_instruction),
-        HumanMessagePromptTemplate.from_template(user_instruction),
-    ])
-
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    chain = LLMChain(llm=llm, prompt=prompt)
-
-    try:
-        result = chain.run(page_value=page_value).strip()
-        return result
-    except Exception as e:
-        print(f"Error during chain.run(): {type(e).__name__}: {str(e)}")
-        raise
-
 
 async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[str, None]:
     """
