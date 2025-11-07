@@ -495,30 +495,22 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
 
             try:
                 # Open PDF using file path with PyPDF2
+                first_page_num = -1
                 with open(temp_pdf_path, "rb") as pdf_document:
                     reader = PdfReader(pdf_document)
                     page_count = len(reader.pages)
                     print("Extract text from PDF...")
                     for page_num in range(int(page_count)):
-                        firstindex = lastindex = -1
-                        if page_num > 20:
-                            # Set page_num as 20 as an approximation, since we will not be able to
-                            # find out the exact page number.
-                            print("Analyzed more than 20 pages. Setting page num as 20 and exiting.")
-                            first_page_num = 20
-                            break
                         page = reader.pages[page_num]
                         print(f"Page number: {page_num + 1}")
                         page_text = page.extract_text() or ""
                         print(f"Page Text ====== {page_text[:50]}")
-                        firstindex = page_text.lower().find("chapter")
-                        print(f"First index of chapter = {firstindex}")
-                        lastindex = page_text.lower().rfind("chapter")
-                        print(f"Last index of chapter = {lastindex}")
-                        if(firstindex != -1 and lastindex != -1) and (firstindex == lastindex):
-                            first_page_num = page_num
-                            print(f"First page number = {first_page_num}")
+                        if does_part_or_chapter_exist_only_once(page_text) and find_first_chapter_or_part(page_text):
+                            first_page_num = page_num + 1
                             break
+
+                if first_page_num == -1:
+                    first_page_num = 0  # Default to first page if no chapter/part found
 
                 print(f"First chapter starts on page: {first_page_num}")
                 print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
@@ -560,6 +552,53 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
             "error": str(e),
             "success": False
         }
+
+
+def find_first_chapter_or_part(text: str):
+    # Patterns for "Part", "Chapter", or a number at the start of a line
+    patterns = [
+        (r"\bPart\b.*", "Part"),
+        (r"\bChapter\b.*", "Chapter"),
+        (r"^\s*\d+\b", "Number"),
+        (r"^\s*[IVXLCDM]+\b", "RomanNumeral")
+    ]
+    for pattern, label in patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        if match:
+            return match.start() == 0
+    return False
+
+
+def does_part_or_chapter_exist_only_once(page_text: str) -> bool:
+    # Check for Part
+    firstindex, lastindex = get_first_and_last_index_of_part_or_chapter(page_text, "part")
+    if firstindex != -1 and lastindex != -1:
+        # Check for Chapter if it repeats (In case of CONTENTS page)
+        firstindexchapter, lastindexchapter = get_first_and_last_index_of_part_or_chapter(page_text, "chapter")
+        if firstindexchapter != -1 and lastindexchapter != -1:
+            return firstindexchapter == lastindexchapter
+        # Chapter does not exist, check if part exists only once
+        return firstindex == lastindex
+    else:
+        # Check for Chapter if Part doesn't exist
+        firstindex, lastindex = get_first_and_last_index_of_part_or_chapter(page_text, "chapter")
+        if firstindex != -1 and lastindex != -1:
+            # Check for Part if it repeats (In case of CONTENTS page)
+            firstindexpart, lastindexpart = get_first_and_last_index_of_part_or_chapter(page_text, "part")
+            if firstindexpart != -1 and lastindexpart != -1:
+                return firstindexpart == lastindexpart
+            # Part does not exist, check if chapter exists only once
+            return firstindex == lastindex
+    # Neither Chapter nor Part exists
+    return False
+
+
+def get_first_and_last_index_of_part_or_chapter(page_text: str, part_or_chapter: str) -> tuple[int, int]:
+    firstindex = page_text.lower().find(part_or_chapter.lower())
+    print(f"First index of {part_or_chapter} = {firstindex}")
+    lastindex = page_text.lower().rfind(part_or_chapter.lower())
+    print(f"Last index of {part_or_chapter} = {lastindex}")
+    return firstindex, lastindex
 
 
 # Update agent initialization
