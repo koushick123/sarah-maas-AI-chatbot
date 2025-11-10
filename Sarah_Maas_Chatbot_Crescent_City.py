@@ -465,87 +465,102 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
 
         book_doc = collection_book_chunk_metadata.find_one({"file_id": book_id})
         if book_doc:
-            # Convert ObjectId fields to strings
-            for key, value in book_doc.items():
-                if isinstance(value, ObjectId):
-                    book_doc[key] = str(value)
-            return book_doc
-        else:
-            # Get staging document
-            doc = collection_book_staging.find_one({"book_id": book_id})
-            if not doc:
-                return {"error": "Book not found", "success": False}
-
-            # Retrieve PDF from GridFS
-            file_id = ObjectId(doc["file_id"])
-            pdf_file = fs.get(file_id)
-            pdf_binary = pdf_file.read()
-
-            print(f"📄 PDF fetched, size: {len(pdf_binary)} bytes")
-
-            # Create a temporary file to write the PDF binary
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
-                temp_pdf.write(pdf_binary)
-                temp_pdf_path = temp_pdf.name
-
-            try:
-                from PyPDF2 import PdfReader
-            except Exception as e:
-                raise RuntimeError("PyPDF2 is required to extract PDF text: " + str(e))
-
-            try:
-                # Open PDF using file path with PyPDF2
-                first_page_num = -1
-                with open(temp_pdf_path, "rb") as pdf_document:
-                    reader = PdfReader(pdf_document)
-                    page_count = len(reader.pages)
-                    print("Extract text from PDF...")
-                    for page_num in range(int(page_count)):
-                        page = reader.pages[page_num]
-                        print(f"Page number: {page_num + 1}")
-                        page_text = page.extract_text() or ""
-                        print(f"Page Text ====== {page_text[:50]}")
-                        if does_part_or_chapter_exist_only_once(page_text) and find_first_chapter_or_part(page_text):
-                            first_page_num = page_num + 1
-                            break
-
-                if first_page_num == -1:
-                    first_page_num = 0  # Default to first page if no chapter/part found
-
-                print(f"First chapter starts on page: {first_page_num}")
-                print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
-
-                with open(temp_pdf_path, "rb") as pdf_document:
-                    full_text = ""
-                    reader_for_full_text = PdfReader(pdf_document)
-                    for page_num in range(first_page_num, int(page_count)):
-                        page = reader_for_full_text.pages[page_num]
-                        full_text += page.extract_text() or ""
-
-                # Chunk the text
-                print(f"Size of full text to chunk: {len(full_text)} characters")
-                chunk_index = chunk_text(full_text, chunk_size, 100, book_id)
-                print(f"📦 Text divided into {(chunk_index+1)} chunks")
-
-                book_metadata = {
-                    "file_id": book_id,
-                    "file_name": f"{book_id}.pdf",
-                    "page_count": page_count,
-                    "page_for_first_chapter": first_page_num,
-                    "total_chunks": (chunk_index + 1),
-                    "total_characters": len(full_text)
-                }
-
-                collection_book_chunk_metadata.insert_one(book_metadata)
-                for key, value in book_metadata.items():
+            # Check if chunks already exist as well.
+            chunks_doc = collection_book_chunks.find({"book_id": book_id})
+            if chunks_doc.next():
+                print(f"Book chunks already exist for book_id: {book_id}, returning existing metadata.")
+                # Convert ObjectId fields to strings
+                for key, value in book_doc.items():
                     if isinstance(value, ObjectId):
-                        book_metadata[key] = str(value)
-                return book_metadata
-            finally:
-                # Clean up temporary file
-                if os.path.exists(temp_pdf_path):
-                    os.unlink(temp_pdf_path)
+                        book_doc[key] = str(value)
+                print(f"Return book chunks metadata from existing record = {book_doc}")
+                return book_doc
+            else:
+                print("Chunks do not exist, preparing the chunks for the book.")
+                # Retrieve PDF from GridFS
+                file_id = ObjectId(book_doc["file_id"])
+                pdf_file = fs.get(file_id)
+                pdf_binary = pdf_file.read()
 
+                print(f"📄 PDF fetched, size: {len(pdf_binary)} bytes")
+
+                # Create a temporary file to write the PDF binary
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
+                    temp_pdf.write(pdf_binary)
+                    temp_pdf_path = temp_pdf.name
+
+                try:
+                    from PyPDF2 import PdfReader
+                except Exception as e:
+                    raise RuntimeError("PyPDF2 is required to extract PDF text: " + str(e))
+
+                try:
+                    # Open PDF using file path with PyPDF2
+                    first_page_num = -1
+                    with open(temp_pdf_path, "rb") as pdf_document:
+                        reader = PdfReader(pdf_document)
+                        page_count = len(reader.pages)
+                        print("Extract text from PDF...")
+                        for page_num in range(int(page_count)):
+                            page = reader.pages[page_num]
+                            print(f"Page number: {page_num + 1}")
+                            page_text = page.extract_text() or ""
+                            print(f"Page Text ====== {page_text[:50]}")
+                            if does_part_or_chapter_exist_only_once(page_text) and find_first_chapter_or_part(page_text.strip()):
+                                first_page_num = page_num + 1
+                                break
+
+                    if first_page_num == -1:
+                        # No chapter or part found, return metadata with zero chunks
+                        # UI to handle the logic to say no analysis possible since Part or Chapter not found
+                        return {
+                            "file_id": book_id,
+                            "file_name": f"{book_id}.pdf",
+                            "page_count": page_count,
+                            "page_for_first_chapter": first_page_num,
+                            "total_chunks": 0,
+                            "total_characters": 0
+                        }
+
+                    print(f"First chapter starts on page: {first_page_num}")
+                    print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
+
+                    with open(temp_pdf_path, "rb") as pdf_document:
+                        full_text = ""
+                        reader_for_full_text = PdfReader(pdf_document)
+                        for page_num in range(first_page_num, int(page_count)):
+                            page = reader_for_full_text.pages[page_num]
+                            full_text += page.extract_text() or ""
+
+                    # Chunk the text
+                    print(f"Size of full text to chunk: {len(full_text)} characters")
+                    chunk_index = chunk_text(full_text, chunk_size, 100, book_id)
+                    print(f"📦 Text divided into {(chunk_index+1)} chunks")
+
+                    book_metadata = {
+                        "file_id": book_id,
+                        "file_name": f"{book_id}.pdf",
+                        "page_count": page_count,
+                        "page_for_first_chapter": first_page_num,
+                        "total_chunks": (chunk_index + 1),
+                        "total_characters": len(full_text)
+                    }
+
+                    collection_book_chunk_metadata.update_one(
+                        {"file_id": book_id},
+                        {"$set": book_metadata},
+                        upsert=True
+                    )
+                    for key, value in book_metadata.items():
+                        if isinstance(value, ObjectId):
+                            book_metadata[key] = str(value)
+                    return book_metadata
+                finally:
+                    # Clean up temporary file
+                    if os.path.exists(temp_pdf_path):
+                        os.unlink(temp_pdf_path)
+        else:
+            return {"error": f"Book metadata for {book_id }not found", "success": False}
     except Exception as e:
         print(f"❌ Error in get_book_chunks tool: {str(e)}")
         return {
@@ -555,10 +570,10 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
 
 
 def find_first_chapter_or_part(text: str):
-    # Patterns for "Part", "Chapter", or a number at the start of a line
+    # Patterns for "Part", "Chapter" as independent words at line start, number, or Roman numeral
     patterns = [
-        (r"\bPart\b.*", "Part"),
-        (r"\bChapter\b.*", "Chapter"),
+        (r"^\s*\bPart\b(?!\w)", "Part"),
+        (r"^\s*\bChapter\b(?!\w)", "Chapter"),
         (r"^\s*\d+\b", "Number"),
         (r"^\s*[IVXLCDM]+\b", "RomanNumeral")
     ]
@@ -594,10 +609,20 @@ def does_part_or_chapter_exist_only_once(page_text: str) -> bool:
 
 
 def get_first_and_last_index_of_part_or_chapter(page_text: str, part_or_chapter: str) -> tuple[int, int]:
+    # Include a check for 'Section' as well during 'Part' check
     firstindex = page_text.lower().find(part_or_chapter.lower())
     print(f"First index of {part_or_chapter} = {firstindex}")
     lastindex = page_text.lower().rfind(part_or_chapter.lower())
     print(f"Last index of {part_or_chapter} = {lastindex}")
+
+    if part_or_chapter.lower() == "part":
+        if firstindex == -1 and lastindex == -1:
+            # Check for 'Section' if 'Part' not found
+            firstindex = page_text.lower().find("section")
+            print(f"First index of Section = {firstindex}")
+            lastindex = page_text.lower().rfind("section")
+            print(f"Last index of Section = {lastindex}")
+
     return firstindex, lastindex
 
 
@@ -635,6 +660,7 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
         Server-Sent Events (SSE) formatted strings with analysis progress
     """
     # Multi-step user instruction for chunked analysis with rate limiting
+    print(f"Starting book analysis for book_id: {book_id} with chunk_size: {chunk_size}")
     user_instruction = f"""
     Analyze the book with ID: {book_id}
     STEP 0: Call the get_book_chunks tool with book_id="{book_id}" to get the book content in chunks ONLY ONCE. 
@@ -649,11 +675,12 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
     STEP 5: If (index >= 7 AND (index % 7 is 0 OR index >= {chunk_size})), go to ANALYZER, else continue to STEP 3.
 
     ANALYZER: 
-    1. Find out the number of chapters returned from the get_chunk() into chapter_count. Each Chapter begins with either "Chapter " or "CHAPTER " 
-    or a number that is underlined, or a number that is highlighted in color.
-    2. Update the chapter_count.
-    3. Find out the number of parts returned from the get_chunk() into part_count. Each Part begins with either "Part " or "PART " or "Section" or "SECTION".
-    4. Update the part_count.
+    1. Find out the number of chapters returned from the get_chunk(). Each Chapter begins with the word "Chapter"
+    or a number that is underlined, or a number that is highlighted in color. Ignore case sensitivity while searching for "Chapter".
+    2. Add the number to existing value of chapter_count.
+    3. Find out the number of parts returned from the get_chunk(). Each Part begins with either "Part " or "PART " or "Section" or "SECTION".
+    Ignore case sensitivity while searching for "Part" or "Section".
+    4. Add the number to existing value of part_count.
 
     STEP 6: Remove all the text retrieved from get_chunk() called from STEP 3 from user instruction 
     passed to LLM to ensure rate limit or model context window size is not exceeded.
@@ -668,11 +695,12 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
         "chapters": <chapter_count>,
         "parts": <part_count>,
         "pages": <page_count from tool>,
+        "last_chunk": <last get_chunk() content with first 100 characters for {book_id}>,
         "error": <any error messages encountered during analysis or null>
     }}
     Begin by calling get_book_chunks now.
     DO NOT PROVIDE INTERMEDIATE RESPONSES. WAIT UNTIL ALL STEPS ARE COMPLETED BEFORE RESPONDING.
-    DO NOT RETURN ANYTHING OTHER THAN THE JSON IN STEP 10. ANY ERRORS MUST ONLY BE REPORTED IN THE "error" FIELD OF THE JSON.
+    DO NOT RETURN ANYTHING OTHER THAN THE JSON IN STEP 9. ANY ERRORS MUST ONLY BE REPORTED IN THE "error" FIELD OF THE JSON.
     """
 
     try:
@@ -733,8 +761,10 @@ async def book_analysis_agent(book_id: str):
     Returns:
         StreamingResponse with SSE formatted data
     """
+    number_of_chunks = collection_book_chunk_metadata.find_one({"file_id": book_id}).get("total_chunks")
+    print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
     return StreamingResponse(
-        stream_book_analysis(book_id,56),
+        stream_book_analysis(book_id,7),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
