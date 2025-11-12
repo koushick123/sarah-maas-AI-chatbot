@@ -425,7 +425,9 @@ def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: 
         print("Appending chunk:", start, "to", end," with size ", len(chunk_text_value))
         
         # Store chunk in MongoDB if not exists
-        if not collection_book_chunks.find_one({"index": chunk_index}):
+        index_cond = {"index": chunk_index}
+        book_cond = {"book_id": book_id}
+        if not collection_book_chunks.find_one({"$and": [index_cond, book_cond]}):
             print("Inserting chunk index:", chunk_index)
             collection_book_chunks.insert_one({
                 "index": chunk_index,
@@ -483,7 +485,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
         else:
             print("Chunks do not exist, preparing the chunks for the book.")
             # Retrieve PDF from GridFS
-            file_id = collection_book_staging.find_one({"book_id": book_id})["file_id"]
+            file_id = ObjectId(collection_book_staging.find_one({"book_id": book_id})["file_id"])
             pdf_file = fs.get(file_id)
             pdf_binary = pdf_file.read()
 
@@ -534,7 +536,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     full_text = ""
                     reader_for_full_text = PdfReader(pdf_document)
                     for page_num in range(first_page_num, int(page_count)):
-                        page = reader_for_full_text.pages[page_num]
+                        page = reader_for_full_text.pages[page_num - 1]
                         full_text += page.extract_text() or ""
 
                 # Chunk the text
@@ -772,7 +774,8 @@ async def book_analysis_agent(book_id: str):
             print("Staging record found, now start chunking...")
             book_doc = get_book_chunks(book_id=book_id, chunk_size=25000)
             number_of_chunks = book_doc["total_chunks"]
-        return {"error": f"Book staging record not found for {book_id}."}
+        else:
+            return {"error": f"Book staging record not found for {book_id}."}
 
     print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
     # return StreamingResponse(
