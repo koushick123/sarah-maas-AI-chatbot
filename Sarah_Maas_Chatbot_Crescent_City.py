@@ -1,15 +1,22 @@
+# API to upload PDF
+import asyncio
+import json
 import os
 import tempfile
 import urllib.parse
 import urllib.parse
+import uuid
+from datetime import datetime
 from typing import AsyncGenerator
 
 import requests
 from bson import ObjectId
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
+from fastapi import Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from gridfs import GridFS
 from langchain.chains import LLMChain
 from langchain.chains.summarize import load_summarize_chain
@@ -463,104 +470,96 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
         print(f"🔧 TOOL CALLED: get_book_chunks with book_id={book_id}")
         print(f"Check if book chunks already exist for this book_id : {book_id}")
 
-        book_doc = collection_book_chunk_metadata.find_one({"file_id": book_id})
-        if book_doc:
-            # Check if chunks already exist as well.
-            chunks_doc = collection_book_chunks.find({"book_id": book_id})
-            if chunks_doc.next():
-                print(f"Book chunks already exist for book_id: {book_id}, returning existing metadata.")
-                # Convert ObjectId fields to strings
-                for key, value in book_doc.items():
-                    if isinstance(value, ObjectId):
-                        book_doc[key] = str(value)
-                print(f"Return book chunks metadata from existing record = {book_doc}")
-                return book_doc
-            else:
-                print("Chunks do not exist, preparing the chunks for the book.")
-                # Retrieve PDF from GridFS
-                file_id = ObjectId(book_doc["file_id"])
-                pdf_file = fs.get(file_id)
-                pdf_binary = pdf_file.read()
+        # Check if chunks already exist as well.
+        chunks_doc = collection_book_chunks.find_one({"book_id": book_id})
+        if chunks_doc:
+            print(f"Book chunks already exist for book_id: {book_id}, returning existing metadata.")
+            # Convert ObjectId fields to strings
+            for key, value in chunks_doc.items():
+                if isinstance(value, ObjectId):
+                    chunks_doc[key] = str(value)
+            print(f"Return book chunks metadata from existing record = {chunks_doc}")
+            return chunks_doc
+        else:
+            print("Chunks do not exist, preparing the chunks for the book.")
+            # Retrieve PDF from GridFS
+            file_id = collection_book_staging.find_one({"book_id": book_id})["file_id"]
+            pdf_file = fs.get(file_id)
+            pdf_binary = pdf_file.read()
 
-                print(f"📄 PDF fetched, size: {len(pdf_binary)} bytes")
+            print(f"📄 PDF fetched, size: {len(pdf_binary)} bytes")
 
-                # Create a temporary file to write the PDF binary
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
-                    temp_pdf.write(pdf_binary)
-                    temp_pdf_path = temp_pdf.name
+            # Create a temporary file to write the PDF binary
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
+                temp_pdf.write(pdf_binary)
+                temp_pdf_path = temp_pdf.name
 
-                try:
-                    from PyPDF2 import PdfReader
-                except Exception as e:
-                    raise RuntimeError("PyPDF2 is required to extract PDF text: " + str(e))
+            try:
+                from PyPDF2 import PdfReader
+            except Exception as e:
+                raise RuntimeError("PyPDF2 is required to extract PDF text: " + str(e))
 
-                try:
-                    # Open PDF using file path with PyPDF2
-                    first_page_num = -1
-                    with open(temp_pdf_path, "rb") as pdf_document:
-                        reader = PdfReader(pdf_document)
-                        page_count = len(reader.pages)
-                        print("Extract text from PDF...")
-                        for page_num in range(int(page_count)):
-                            page = reader.pages[page_num]
-                            print(f"Page number: {page_num + 1}")
-                            page_text = page.extract_text() or ""
-                            print(f"Page Text ====== {page_text[:50]}")
-                            if does_part_or_chapter_exist_only_once(page_text) and find_first_chapter_or_part(page_text.strip()):
-                                first_page_num = page_num + 1
-                                break
+            try:
+                # Open PDF using file path with PyPDF2
+                first_page_num = -1
+                with open(temp_pdf_path, "rb") as pdf_document:
+                    reader = PdfReader(pdf_document)
+                    page_count = len(reader.pages)
+                    print("Extract text from PDF...")
+                    for page_num in range(int(page_count)):
+                        page = reader.pages[page_num]
+                        print(f"Page number: {page_num + 1}")
+                        page_text = page.extract_text() or ""
+                        print(f"Page Text ====== {page_text[:50]}")
+                        if does_part_or_chapter_exist_only_once(page_text) and find_first_chapter_or_part(page_text.strip()):
+                            first_page_num = page_num + 1
+                            break
 
-                    if first_page_num == -1:
-                        # No chapter or part found, return metadata with zero chunks
-                        # UI to handle the logic to say no analysis possible since Part or Chapter not found
-                        return {
-                            "file_id": book_id,
-                            "file_name": f"{book_id}.pdf",
-                            "page_count": page_count,
-                            "page_for_first_chapter": first_page_num,
-                            "total_chunks": 0,
-                            "total_characters": 0
-                        }
-
-                    print(f"First chapter starts on page: {first_page_num}")
-                    print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
-
-                    with open(temp_pdf_path, "rb") as pdf_document:
-                        full_text = ""
-                        reader_for_full_text = PdfReader(pdf_document)
-                        for page_num in range(first_page_num, int(page_count)):
-                            page = reader_for_full_text.pages[page_num]
-                            full_text += page.extract_text() or ""
-
-                    # Chunk the text
-                    print(f"Size of full text to chunk: {len(full_text)} characters")
-                    chunk_index = chunk_text(full_text, chunk_size, 100, book_id)
-                    print(f"📦 Text divided into {(chunk_index+1)} chunks")
-
-                    book_metadata = {
+                if first_page_num == -1:
+                    # No chapter or part found, return metadata with zero chunks
+                    # UI to handle the logic to say no analysis possible since Part or Chapter not found
+                    return {
                         "file_id": book_id,
                         "file_name": f"{book_id}.pdf",
                         "page_count": page_count,
                         "page_for_first_chapter": first_page_num,
-                        "total_chunks": (chunk_index + 1),
-                        "total_characters": len(full_text)
+                        "total_chunks": 0,
+                        "total_characters": 0
                     }
 
-                    collection_book_chunk_metadata.update_one(
-                        {"file_id": book_id},
-                        {"$set": book_metadata},
-                        upsert=True
-                    )
-                    for key, value in book_metadata.items():
-                        if isinstance(value, ObjectId):
-                            book_metadata[key] = str(value)
-                    return book_metadata
-                finally:
-                    # Clean up temporary file
-                    if os.path.exists(temp_pdf_path):
-                        os.unlink(temp_pdf_path)
-        else:
-            return {"error": f"Book metadata for {book_id }not found", "success": False}
+                print(f"First chapter starts on page: {first_page_num}")
+                print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
+
+                with open(temp_pdf_path, "rb") as pdf_document:
+                    full_text = ""
+                    reader_for_full_text = PdfReader(pdf_document)
+                    for page_num in range(first_page_num, int(page_count)):
+                        page = reader_for_full_text.pages[page_num]
+                        full_text += page.extract_text() or ""
+
+                # Chunk the text
+                print(f"Size of full text to chunk: {len(full_text)} characters")
+                chunk_index = chunk_text(full_text, chunk_size, 100, book_id)
+                print(f"📦 Text divided into {(chunk_index+1)} chunks")
+
+                book_metadata = {
+                    "file_id": book_id,
+                    "file_name": f"{book_id}.pdf",
+                    "page_count": page_count,
+                    "page_for_first_chapter": first_page_num,
+                    "total_chunks": (chunk_index + 1),
+                    "total_characters": len(full_text)
+                }
+
+                collection_book_chunk_metadata.insert_one(book_metadata)
+                for key, value in book_metadata.items():
+                    if isinstance(value, ObjectId):
+                        book_metadata[key] = str(value)
+                return book_metadata
+            finally:
+                # Clean up temporary file
+                if os.path.exists(temp_pdf_path):
+                    os.unlink(temp_pdf_path)
     except Exception as e:
         print(f"❌ Error in get_book_chunks tool: {str(e)}")
         return {
@@ -761,26 +760,30 @@ async def book_analysis_agent(book_id: str):
     Returns:
         StreamingResponse with SSE formatted data
     """
-    number_of_chunks = collection_book_chunk_metadata.find_one({"file_id": book_id}).get("total_chunks")
+    number_of_chunks:int = 0
+    book_doc = collection_book_chunk_metadata.find_one({"file_id": book_id})
+    if book_doc:
+        number_of_chunks = book_doc["total_chunks"]
+    else:
+        print("Book metadata not found for book_id: ", book_id)
+        print("Check for staging record for the book_id: ", book_id)
+        staging_doc = collection_book_staging.find_one({"book_id": book_id})
+        if staging_doc:
+            print("Staging record found, now start chunking...")
+            book_doc = get_book_chunks(book_id=book_id, chunk_size=25000)
+            number_of_chunks = book_doc["total_chunks"]
+        return {"error": f"Book staging record not found for {book_id}."}
+
     print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
-    return StreamingResponse(
-        stream_book_analysis(book_id,7),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-        }
-    )
-
-# API to upload PDF
-from fastapi import Form, File, UploadFile
-from fastapi.responses import StreamingResponse
-from datetime import datetime
-import uuid
-import json
-import asyncio
-
+    # return StreamingResponse(
+    #     stream_book_analysis(book_id, number_of_chunks),
+    #     media_type="text/event-stream",
+    #     headers={
+    #         "Cache-Control": "no-cache",
+    #         "Connection": "keep-alive",
+    #         "X-Accel-Buffering": "no",  # Disable nginx buffering
+    #     }
+    # )
 
 @app.post("/book/staging/upload")
 async def upload_book_pdf(
