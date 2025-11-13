@@ -788,6 +788,31 @@ async def book_analysis_agent(book_id: str):
     #     }
     # )
 
+@app.delete("/book/staging/{book_id}/chunks/delete")
+def delete_chunks(book_id: str):
+    """
+    Delete all chunks associated with a specific book_id from the database.
+
+    Args:
+        book_id: The unique identifier of the book whose chunks are to be deleted.
+    """
+    result = collection_book_chunks.delete_many({"book_id": book_id})
+    print(f"{result}")
+    print(f"Deleted {result.deleted_count} chunks for book_id: {book_id}")
+
+
+@app.delete("/book/staging/{book_id}/chunk-metadata/delete")
+def delete_chunk_metadata(book_id: str):
+    """
+    Delete chunk metadata associated with a specific book_id from the database.
+
+    Args:
+        book_id: The unique identifier of the book whose chunk metadata is to be deleted.
+    """
+    result = collection_book_chunk_metadata.delete_many({"file_id": book_id})
+    print(f"Deleted {result.deleted_count} chunk metadata records for book_id: {book_id}")
+
+
 @app.post("/book/staging/upload")
 async def upload_book_pdf(
         book_name: str = Form(...),
