@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import tempfile
+import time
 import urllib.parse
 import urllib.parse
 import uuid
@@ -445,10 +446,12 @@ def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: 
     return chunk_index - 1
 
 @tool
-def get_chunk(index: int) -> str:
-    book_chunk = collection_book_chunks.find_one({"index": index})
+def get_chunk(index: int, book_id: str) -> str:
+    index_cond = {"index": index}
+    book_cond = {"book_id": book_id}
+    book_chunk = collection_book_chunks.find_one({"$and": [index_cond, book_cond]})
     if not book_chunk:
-        return f"No Chunk found for index {index}"
+        return f"No Chunk found for index {index} and book_id {book_id}"
 
     return book_chunk["chunk"]
 
@@ -480,7 +483,6 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
             for key, value in chunks_doc.items():
                 if isinstance(value, ObjectId):
                     chunks_doc[key] = str(value)
-            print(f"Return book chunks metadata from existing record = {chunks_doc}")
             return chunks_doc
         else:
             print("Chunks do not exist, preparing the chunks for the book.")
@@ -649,6 +651,44 @@ agent = Agent(
 
 import re
 
+def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
+    system_message = (
+        "You are a knowledgeable literary research assistant with deep familiarity "
+        "with Sarah J. Maas's *Crescent City* series of books.\n"
+        "Focus on counting the number of chapters and parts in the provided text.\n"
+    )
+
+    part_chapter_count = {}
+
+    chat_prompt = ChatPromptTemplate.from_messages([
+        SystemMessagePromptTemplate.from_template(system_message),
+        HumanMessagePromptTemplate.from_template(
+            "Answer the following question using ONLY the context provided.\n"
+            "Context:\n{context}\n\n"
+            "Question: {question}\n\n"
+            "Answer: ONLY IN BELOW FORMAT: {"
+            "   chapter_count: <number of chapters>, "
+            "   part_count: <number of parts> "
+            "}"
+        ),
+    ])
+
+    selected_llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
+
+    chain = LLMChain(llm=selected_llm, prompt=chat_prompt)
+
+    result = chain.run(context=text_to_be_analyzed,
+                     question="Count the number of chapters and parts in the text. Chapter has the word 'Chapter' and Part has the word 'Part' or 'Section'. "
+                              "Ignore case sensitivity.").strip()
+
+    print(f"Chapter and Part Count Result:{result}")
+
+    part_chapter_count['chapter_count'] = result.get('chapter_count', 0)
+    part_chapter_count['part_count'] = result.get('part_count', 0)
+
+    return part_chapter_count
+
+
 async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[str, None]:
     """
     Streams the book analysis process in real-time with chunked processing.
@@ -662,84 +702,81 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
     """
     # Multi-step user instruction for chunked analysis with rate limiting
     print(f"Starting book analysis for book_id: {book_id} with chunk_size: {chunk_size}")
-    user_instruction = f"""
-    Analyze the book with ID: {book_id}
-    STEP 0: Call the get_book_chunks tool with book_id="{book_id}" to get the book content in chunks ONLY ONCE. 
-    STEP 1: Start an index = -1
-    
-    Accumulate chapters and parts across all analyzed chunks (i.e., sum counts from each ANALYZER run after chunks )
 
-    START LOOP :
-    STEP 2: Set chapter_count with initial value of 0, part_count with initial value of 0.
-    STEP 3: Increment index by 1
-    STEP 4: Retrieve a chunk from get_chunk() by passing index
-    STEP 5: If (index >= 7 AND (index % 7 is 0 OR index >= {chunk_size})), go to ANALYZER, else continue to STEP 3.
+    # Send initial status
+    yield f"data: {json.dumps({'status': 'started', 'message': 'Initializing book analysis...'})}\n\n"
 
-    ANALYZER: 
-    1. Find out the number of chapters returned from the get_chunk(). Each Chapter begins with the word "Chapter"
-    or a number that is underlined, or a number that is highlighted in color. Ignore case sensitivity while searching for "Chapter".
-    2. Add the number to existing value of chapter_count.
-    3. Find out the number of parts returned from the get_chunk(). Each Part begins with either "Part " or "PART " or "Section" or "SECTION".
-    Ignore case sensitivity while searching for "Part" or "Section".
-    4. Add the number to existing value of part_count.
+    # Send downloading status
+    yield f"data: {json.dumps({'status': 'downloading', 'message': 'Fetching and chunking book content...', 'total_chunks': chunk_size})}\n\n"
 
-    STEP 6: Remove all the text retrieved from get_chunk() called from STEP 3 from user instruction 
-    passed to LLM to ensure rate limit or model context window size is not exceeded.
-    STEP 7: Wait for 1 minute.
-    STEP 8: Repeat STEP 3 (START LOOP) to STEP 7 until index = {chunk_size}.
-    END LOOP
+    # Send analyzing status
+    yield f"data: {json.dumps({'status': 'analyzing', 'message': 'Processing chunks and analyzing structure...'})}\n\n"
 
-    STEP 9: Return ONLY this JSON format:
-    {{
-        "file_name": "<file_name from tool>",
-        "file_id": "{book_id}",
-        "chapters": <chapter_count>,
-        "parts": <part_count>,
-        "pages": <page_count from tool>,
-        "last_chunk": <last get_chunk() content with first 100 characters for {book_id}>,
-        "error": <any error messages encountered during analysis or null>
-    }}
-    Begin by calling get_book_chunks now.
-    DO NOT PROVIDE INTERMEDIATE RESPONSES. WAIT UNTIL ALL STEPS ARE COMPLETED BEFORE RESPONDING.
-    DO NOT RETURN ANYTHING OTHER THAN THE JSON IN STEP 9. ANY ERRORS MUST ONLY BE REPORTED IN THE "error" FIELD OF THE JSON.
-    """
+    # STEP 1: Start an index = 0
+    index = -1
+
+    # STEP 2: Set chapter_count and part_count
+    chunk_batch = []
+    error = None
+    last_chunk_content = ""
+    batch_size = 5
+    part_capter_count = {}
 
     try:
-        # Send initial status
-        yield f"data: {json.dumps({'status': 'started', 'message': 'Initializing book analysis...'})}\n\n"
+        # START LOOP
+        while True:
+            index += 1
 
-        # Send downloading status
-        yield f"data: {json.dumps({'status': 'downloading', 'message': 'Fetching and chunking book content...', 'total_chunks': chunk_size})}\n\n"
+            try:
+                chunk_batch.append(get_chunk(index, book_id))
+            except Exception as e:
+                error = f"Error retrieving chunk {index}: {str(e)}"
+                break
 
-        # Send analyzing status
-        yield f"data: {json.dumps({'status': 'analyzing', 'message': 'Processing chunks and analyzing structure...'})}\n\n"
+            # STEP 5: Check if we should analyze
+            if index >= batch_size and (index % batch_size == 0 or index >= chunk_size):
+                # ANALYZER
+                batch_text = " ".join(chunk_batch)
 
-        # Call agent and capture result
-        result = agent(user_instruction)
+                print(f"Analyzing batch ending with chunk index: {index}")
+                part_capter_count = fetch_chapter_and_part_counts(batch_text)
 
-        # Parse the result to extract the JSON from STEP 10
-        analysis_result = None
+                print(f"Batch chapter and part count: {part_capter_count['chapter_count']}, {part_capter_count['part_count']}")
 
-        # Try to extract JSON from the result
-        if isinstance(result, dict):
-            analysis_result = result
-            print("Analysis Result Dict:", analysis_result)
-        elif isinstance(result, str):
-            # Try to find JSON in the response
-            json_match = re.search(r'\{[^{}]*"file_name"[^{}]*\}', result, re.DOTALL)
-            if json_match:
-                try:
-                    analysis_result = json.loads(json_match.group())
-                except json.JSONDecodeError:
-                    # If parsing fails, try to extract manually
-                    pass
+                chunk_batch = []
 
-        if analysis_result:
-            # Send completion status with the analysis result
-            yield f"data: {json.dumps({'status': 'completed', 'message': 'Book analysis completed successfully', 'result': analysis_result})}\n\n"
-        else:
-            # If we couldn't parse the result, send it as-is
-            yield f"data: {json.dumps({'status': 'completed', 'message': 'Book analysis completed', 'raw_result': str(result)})}\n\n"
+                time.sleep(60)
+
+            if index > chunk_size:
+                break
+
+        # END LOOP
+
+    except Exception as e:
+        error = f"Unexpected error: {str(e)}"
+
+    print(f"Part count from LLM {part_capter_count}")
+
+    if part_capter_count.keys():
+        result = {
+            "file_id": book_id,
+            "chapters": part_capter_count['chapter_count'],
+            "parts": part_capter_count['part_count'],
+            "last_chunk": last_chunk_content,
+            "error": error
+        }
+    else:
+        result = {
+            "file_id": book_id,
+            "chapters": 0,
+            "parts": 0,
+            "last_chunk": last_chunk_content,
+            "error": error
+        }
+
+    try:
+        # Send completion status with the analysis result
+        yield f"data: {json.dumps({'status': 'completed', 'message': 'Book analysis completed successfully', 'result': result})}\n\n"
 
     except Exception as e:
         # Send error with details
@@ -778,15 +815,19 @@ async def book_analysis_agent(book_id: str):
             return {"error": f"Book staging record not found for {book_id}."}
 
     print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
-    # return StreamingResponse(
-    #     stream_book_analysis(book_id, number_of_chunks),
-    #     media_type="text/event-stream",
-    #     headers={
-    #         "Cache-Control": "no-cache",
-    #         "Connection": "keep-alive",
-    #         "X-Accel-Buffering": "no",  # Disable nginx buffering
-    #     }
-    # )
+    if number_of_chunks > 0:
+        return StreamingResponse(
+            stream_book_analysis(book_id, number_of_chunks),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            }
+        )
+    else:
+        return {"error": f"No chunks available for analysis for book_id: {book_id}."}
+
 
 @app.delete("/book/staging/{book_id}/chunks/delete")
 def delete_chunks(book_id: str):
