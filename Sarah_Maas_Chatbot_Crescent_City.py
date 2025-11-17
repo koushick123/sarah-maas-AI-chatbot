@@ -666,25 +666,39 @@ def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
             "Answer the following question using ONLY the context provided.\n"
             "Context:\n{context}\n\n"
             "Question: {question}\n\n"
-            "Answer: ONLY IN BELOW FORMAT: {"
+            "Answer: ONLY IN BELOW FORMAT: {{"
             "   chapter_count: <number of chapters>, "
             "   part_count: <number of parts> "
-            "}"
+            "}}"
         ),
     ])
 
-    selected_llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
+    selected_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
 
     chain = LLMChain(llm=selected_llm, prompt=chat_prompt)
 
-    result = chain.run(context=text_to_be_analyzed,
+    raw_result = chain.run(context=text_to_be_analyzed,
                      question="Count the number of chapters and parts in the text. Chapter has the word 'Chapter' and Part has the word 'Part' or 'Section'. "
                               "Ignore case sensitivity.").strip()
 
-    print(f"Chapter and Part Count Result:{result}")
+    print(f"Raw LLM result: {raw_result}")
 
-    part_chapter_count['chapter_count'] = result.get('chapter_count', 0)
-    part_chapter_count['part_count'] = result.get('part_count', 0)
+    # ---- FIX: extract JSON from the LLM output ----
+    match = re.search(r"\{.*\}", raw_result, re.DOTALL)
+    if not match:
+        raise ValueError(f"LLM did not return JSON. Got:\n{raw_result}")
+
+    json_text = match.group(0)
+
+    # Parse JSON strictly
+    try:
+        parsed = json.loads(json_text)
+        print(f"Parsed JSON: {parsed}")
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Invalid JSON returned: {e}\nRaw: {json_text}")
+
+    part_chapter_count['chapter_count']=parsed['chapter_count']
+    part_chapter_count['part_count']=parsed['part_count']
 
     return part_chapter_count
 
@@ -712,57 +726,39 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
     # Send analyzing status
     yield f"data: {json.dumps({'status': 'analyzing', 'message': 'Processing chunks and analyzing structure...'})}\n\n"
 
-    # STEP 1: Start an index = 0
-    index = -1
-
-    # STEP 2: Set chapter_count and part_count
+    index = 0
     chunk_batch = []
     error = None
-    last_chunk_content = ""
+    chapter_count = 0
+    part_count = 0
     batch_size = 5
-    part_capter_count = {}
-
+    part_capter_count: dict[str, int] = {}
     try:
-        # START LOOP
-        while True:
-            index += 1
-
-            try:
-                chunk_batch.append(get_chunk(index, book_id))
-            except Exception as e:
-                error = f"Error retrieving chunk {index}: {str(e)}"
-                break
-
-            # STEP 5: Check if we should analyze
+        while index < chunk_size:
+            chunk_batch.append(get_chunk(index, book_id))
             if index >= batch_size and (index % batch_size == 0 or index >= chunk_size):
                 # ANALYZER
-                batch_text = " ".join(chunk_batch)
-
-                print(f"Analyzing batch ending with chunk index: {index}")
-                part_capter_count = fetch_chapter_and_part_counts(batch_text)
-
-                print(f"Batch chapter and part count: {part_capter_count['chapter_count']}, {part_capter_count['part_count']}")
-
-                chunk_batch = []
-
+                part_capter_count, chunk_batch = process_chunk_for_chapter_and_part(chunk_batch)
+                chapter_count += part_capter_count['chapter_count']
+                part_count += part_capter_count['part_count']
                 time.sleep(60)
+            index += 1
 
-            if index > chunk_size:
-                break
-
-        # END LOOP
+        # Calculate the part and chapter counts from the last batch if any
+        if chunk_batch:
+            part_capter_count, chunk_batch = process_chunk_for_chapter_and_part(chunk_batch)
+            chapter_count += part_capter_count['chapter_count']
+            part_count += part_capter_count['part_count']
 
     except Exception as e:
         error = f"Unexpected error: {str(e)}"
-
-    print(f"Part count from LLM {part_capter_count}")
+        print(error)
 
     if part_capter_count.keys():
         result = {
             "file_id": book_id,
-            "chapters": part_capter_count['chapter_count'],
-            "parts": part_capter_count['part_count'],
-            "last_chunk": last_chunk_content,
+            "chapters": chapter_count,
+            "parts": part_count,
             "error": error
         }
     else:
@@ -770,7 +766,6 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
             "file_id": book_id,
             "chapters": 0,
             "parts": 0,
-            "last_chunk": last_chunk_content,
             "error": error
         }
 
@@ -787,6 +782,13 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
         # Send done signal
         yield "data: [DONE]\n\n"
 
+
+def process_chunk_for_chapter_and_part(chunk_batch:[]):
+    batch_text = " ".join(chunk_batch)
+    part_capter_count = fetch_chapter_and_part_counts(batch_text)
+    print(f"Last chunk content: {chunk_batch[-1][:50]}...")
+    chunk_batch.clear()
+    return part_capter_count, chunk_batch
 
 @app.get("/book/staging/{book_id}/analyze")
 async def book_analysis_agent(book_id: str):
