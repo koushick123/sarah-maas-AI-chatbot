@@ -26,8 +26,7 @@ from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, H
 from langchain.schema import Document
 from pydantic import BaseModel
 from pymongo import MongoClient
-from strands import Agent, tool
-from strands.models.openai import OpenAIModel
+from strands import tool
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -628,27 +627,6 @@ def get_first_and_last_index_of_part_or_chapter(page_text: str, part_or_chapter:
 
     return firstindex, lastindex
 
-
-# Update agent initialization
-model = OpenAIModel(
-    client_args={
-        "api_key": os.environ["OPENAI_API_KEY"]
-    },
-    model_id="gpt-5-nano",
-    params={
-        "temperature": 1,
-    }
-)
-
-agent = Agent(
-    model=model,
-    system_prompt=(
-        "You are a book analyzer who will help to understand the structure and format of a book. "
-        "Ignore preface, foreword, introduction, appendices, index, bibliography, and non-text content."
-    ),
-    tools=[get_book_chunks, get_chunk]
-)
-
 import re
 
 def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
@@ -666,9 +644,9 @@ def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
             "Answer the following question using ONLY the context provided.\n"
             "Context:\n{context}\n\n"
             "Question: {question}\n\n"
-            "Answer: ONLY IN BELOW FORMAT: {{"
-            "   chapter_count: <number of chapters>, "
-            "   part_count: <number of parts> "
+            "Answer: USE ONLY BELOW CONTEXT AND RETURN ONLY IN BELOW FORMAT:  {{"
+            "   \"chapter_count\": <number of chapters>, "
+            "   \"part_count\": <number of parts> "
             "}}"
         ),
     ])
@@ -677,11 +655,10 @@ def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
 
     chain = LLMChain(llm=selected_llm, prompt=chat_prompt)
 
-    raw_result = chain.run(context=text_to_be_analyzed,
-                     question="Count the number of chapters and parts in the text. Chapter has the word 'Chapter' and Part has the word 'Part' or 'Section'. "
-                              "Ignore case sensitivity.").strip()
-
-    print(f"Raw LLM result: {raw_result}")
+    raw_result = chain.invoke({"context":text_to_be_analyzed,
+                     "question":"Count the number of times the word 'chapter' and ('part' or 'section') appear in the text."
+                              "Ignore case sensitivity for chapter and (part or section), and ignore the number that occurs after them. "
+                                "Set chapter_count and part_count to 0."})["text"]
 
     # ---- FIX: extract JSON from the LLM output ----
     match = re.search(r"\{.*\}", raw_result, re.DOTALL)
@@ -738,17 +715,21 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
             chunk_batch.append(get_chunk(index, book_id))
             if index >= batch_size and (index % batch_size == 0 or index >= chunk_size):
                 # ANALYZER
-                part_capter_count, chunk_batch = process_chunk_for_chapter_and_part(chunk_batch)
+                part_capter_count = process_chunk_for_chapter_and_part(chunk_batch)
                 chapter_count += part_capter_count['chapter_count']
                 part_count += part_capter_count['part_count']
+                print(f"Chapter count so far: {chapter_count}, Part count so far: {part_count}")
+                chunk_batch.clear()
                 time.sleep(60)
             index += 1
 
         # Calculate the part and chapter counts from the last batch if any
         if chunk_batch:
-            part_capter_count, chunk_batch = process_chunk_for_chapter_and_part(chunk_batch)
+            part_capter_count = process_chunk_for_chapter_and_part(chunk_batch)
             chapter_count += part_capter_count['chapter_count']
             part_count += part_capter_count['part_count']
+            print(f"Chapter count final : {chapter_count}, Part count final : {part_count}")
+            chunk_batch.clear()
 
     except Exception as e:
         error = f"Unexpected error: {str(e)}"
@@ -777,6 +758,7 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
         # Send error with details
         error_message = str(e)
         yield f"data: {json.dumps({'status': 'error', 'message': f'Analysis failed: {error_message}'})}\n\n"
+        print(error_message)
 
     finally:
         # Send done signal
@@ -785,10 +767,10 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
 
 def process_chunk_for_chapter_and_part(chunk_batch:[]):
     batch_text = " ".join(chunk_batch)
+    print(f"First 50 chars of batch_text = {batch_text[0:50]}...")
+    print(f"Last 50 chars of batch_text = {batch_text[-50:]}...")
     part_capter_count = fetch_chapter_and_part_counts(batch_text)
-    print(f"Last chunk content: {chunk_batch[-1][:50]}...")
-    chunk_batch.clear()
-    return part_capter_count, chunk_batch
+    return part_capter_count
 
 @app.get("/book/staging/{book_id}/analyze")
 async def book_analysis_agent(book_id: str):
