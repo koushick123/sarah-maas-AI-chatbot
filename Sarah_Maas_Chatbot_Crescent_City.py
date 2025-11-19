@@ -630,54 +630,71 @@ def get_first_and_last_index_of_part_or_chapter(page_text: str, part_or_chapter:
 import re
 
 def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
+    # ---- FIXED SYSTEM MESSAGE ----
     system_message = (
-        "You are a knowledgeable literary research assistant with deep familiarity "
-        "with Sarah J. Maas's *Crescent City* series of books.\n"
-        "Focus on counting the number of chapters and parts in the provided text.\n"
+        "You are a strict text-analysis tool.\n"
+        "\n"
+        "MANDATORY RULES:\n"
+        "1. Treat THIS INPUT as completely independent.\n"
+        "2. You have NO MEMORY of any previous text.\n"
+        "3. NEVER assume continuity between chunks.\n"
+        "4. ALWAYS reset chapter_count = 0 and part_count = 0 before counting.\n"
+        "5. ONLY use EXACTLY the text in {context}; ignore all external knowledge.\n"
+        "6. Count the words 'chapter', 'part', and 'section' (case-insensitive).\n"
+        "7. Do NOT infer or add chapter numbers based on patterns.\n"
+        "8. If the chunk contains: CHAPTER 57 → count = 1 (not cumulative).\n"
+        "9. Your answer MUST be ONLY valid JSON with two keys:\n"
+        "   {\"chapter_count\": X, \"part_count\": Y}\n"
+        "10. If the previous chunk ended at 'Chapter 5' and this chunk has 'Chapter 1',\n"
+        "    YOU MUST return {\"chapter_count\": 1, \"part_count\": 0}.\n"
     )
-
-    part_chapter_count = {}
 
     chat_prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system_message),
+
         HumanMessagePromptTemplate.from_template(
-            "Answer the following question using ONLY the context provided.\n"
+            "Analyze ONLY the following text. Do NOT use memory. Do NOT assume continuity.\n"
+            "\n"
             "Context:\n{context}\n\n"
-            "Question: {question}\n\n"
-            "Answer: USE ONLY BELOW CONTEXT AND RETURN ONLY IN BELOW FORMAT:  {{"
-            "   \"chapter_count\": <number of chapters>, "
-            "   \"part_count\": <number of parts> "
+            "Task: Count how many times the words appear (case-insensitive):\n"
+            "  • 'chapter'\n"
+            "  • 'part' or 'section'\n"
+            "\n"
+            "Return ONLY this JSON object:\n"
+            "{{\n"
+            "  \"chapter_count\": <number>,\n"
+            "  \"part_count\": <number>\n"
             "}}"
         ),
     ])
 
-    selected_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
+    selected_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0)
 
     chain = LLMChain(llm=selected_llm, prompt=chat_prompt)
 
-    raw_result = chain.invoke({"context":text_to_be_analyzed,
-                     "question":"Count the number of times the word 'chapter' and ('part' or 'section') appear in the text."
-                              "Ignore case sensitivity for chapter and (part or section), and ignore the number that occurs after them. "
-                                "Set chapter_count and part_count to 0."})["text"]
+    raw_result = chain.invoke(
+        {
+            "context": text_to_be_analyzed,
+            "question": "Count chapter/part/section ONLY inside this chunk."
+        }
+    )["text"]
 
-    # ---- FIX: extract JSON from the LLM output ----
+    # ---- Extract JSON safely ----
     match = re.search(r"\{.*\}", raw_result, re.DOTALL)
     if not match:
         raise ValueError(f"LLM did not return JSON. Got:\n{raw_result}")
 
     json_text = match.group(0)
 
-    # Parse JSON strictly
     try:
         parsed = json.loads(json_text)
-        print(f"Parsed JSON: {parsed}")
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON returned: {e}\nRaw: {json_text}")
 
-    part_chapter_count['chapter_count']=parsed['chapter_count']
-    part_chapter_count['part_count']=parsed['part_count']
-
-    return part_chapter_count
+    return {
+        "chapter_count": parsed["chapter_count"],
+        "part_count": parsed["part_count"],
+    }
 
 
 async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[str, None]:
@@ -708,7 +725,7 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
     error = None
     chapter_count = 0
     part_count = 0
-    batch_size = 5
+    batch_size = 12
     part_capter_count: dict[str, int] = {}
     try:
         while index < chunk_size:
