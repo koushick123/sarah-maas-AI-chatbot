@@ -444,7 +444,6 @@ def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: 
 
     return chunk_index - 1
 
-@tool
 def get_chunk(index: int, book_id: str) -> str:
     index_cond = {"index": index}
     book_cond = {"book_id": book_id}
@@ -456,7 +455,6 @@ def get_chunk(index: int, book_id: str) -> str:
 
 
 @app.get("/book/staging/{book_id}/chunks")
-@tool
 def get_book_chunks(book_id: str, chunk_size: int = 25000):
     """
     Download PDF and return chunked text for analysis.
@@ -723,7 +721,7 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
     part_capter_count: dict[str, int] = {}
     try:
         # Case-insensitive regex patterns
-        chapter_pattern = re.compile(r"\bchapter\b", re.IGNORECASE)
+        chapter_pattern = re.compile(r"\bchapter\b(?:\s+\d+)?(?:\s*[-:])?|chapter\s*$", re.IGNORECASE | re.MULTILINE)
         for index in range(0, chunk_size):
             print(f"Fetching chunk for index {index}")
             book_contents = get_chunk(index, book_id)
@@ -778,6 +776,7 @@ def process_chunk_for_chapter_and_part(chunk_batch:[]):
     print(f"Last 50 chars of batch_text = {batch_text[-30:]}...")
     part_capter_count = fetch_chapter_and_part_counts(batch_text)
     return part_capter_count
+
 
 @app.get("/book/staging/{book_id}/analyze")
 async def book_analysis_agent(book_id: str):
