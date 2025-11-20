@@ -630,7 +630,6 @@ def get_first_and_last_index_of_part_or_chapter(page_text: str, part_or_chapter:
 import re
 
 def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
-    # ---- FIXED SYSTEM MESSAGE ----
     system_message = (
         "You are a strict text-analysis tool.\n"
         "\n"
@@ -643,39 +642,33 @@ def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
         "6. Count the words 'chapter', 'part', and 'section' (case-insensitive).\n"
         "7. Do NOT infer or add chapter numbers based on patterns.\n"
         "8. If the chunk contains: CHAPTER 57 → count = 1 (not cumulative).\n"
-        "9. Your answer MUST be ONLY valid JSON with two keys:\n"
-        "   {\"chapter_count\": X, \"part_count\": Y}\n"
-        "10. If the previous chunk ended at 'Chapter 5' and this chunk has 'Chapter 1',\n"
-        "    YOU MUST return {\"chapter_count\": 1, \"part_count\": 0}.\n"
     )
 
     chat_prompt = ChatPromptTemplate.from_messages([
         SystemMessagePromptTemplate.from_template(system_message),
 
         HumanMessagePromptTemplate.from_template(
-            "Analyze ONLY the following text. Do NOT use memory. Do NOT assume continuity.\n"
+            "Answer the below question. Do NOT use memory. Do NOT assume continuity.\n"
             "\n"
-            "Context:\n{context}\n\n"
-            "Task: Count how many times the words appear (case-insensitive):\n"
-            "  • 'chapter'\n"
-            "  • 'part' or 'section'\n"
+            "Context:\n{context}\n"
+            "Question: \n{question}\n"
             "\n"
             "Return ONLY this JSON object:\n"
-            "{{\n"
-            "  \"chapter_count\": <number>,\n"
-            "  \"part_count\": <number>\n"
-            "}}"
+            "\n"
+            "  \"chapter_count\": <number_of_chapters>,\n"
+            "  \"part_count\": <number_of_parts>\n"
+            ""
         ),
     ])
 
-    selected_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.0)
+    selected_llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
 
     chain = LLMChain(llm=selected_llm, prompt=chat_prompt)
 
     raw_result = chain.invoke(
         {
             "context": text_to_be_analyzed,
-            "question": "Count chapter/part/section ONLY inside this chunk."
+            "question": "Count number of times chapter/part/section appears ONLY inside this chunk."
         }
     )["text"]
 
@@ -688,6 +681,7 @@ def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
 
     try:
         parsed = json.loads(json_text)
+        print(f"Parsed JSON: {parsed}")
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON returned: {e}\nRaw: {json_text}")
 
@@ -720,33 +714,29 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
     # Send analyzing status
     yield f"data: {json.dumps({'status': 'analyzing', 'message': 'Processing chunks and analyzing structure...'})}\n\n"
 
-    index = 0
-    chunk_batch = []
+    book_contents:str = ""
     error = None
     chapter_count = 0
+    total_parts = 0
     part_count = 0
-    batch_size = 12
+    section_count = 0
     part_capter_count: dict[str, int] = {}
     try:
-        while index < chunk_size:
-            chunk_batch.append(get_chunk(index, book_id))
-            if index >= batch_size and (index % batch_size == 0 or index >= chunk_size):
-                # ANALYZER
-                part_capter_count = process_chunk_for_chapter_and_part(chunk_batch)
-                chapter_count += part_capter_count['chapter_count']
-                part_count += part_capter_count['part_count']
-                print(f"Chapter count so far: {chapter_count}, Part count so far: {part_count}")
-                chunk_batch.clear()
-                time.sleep(60)
-            index += 1
+        # Case-insensitive regex patterns
+        chapter_pattern = re.compile(r"\bchapter\b", re.IGNORECASE)
+        for index in range(0, chunk_size):
+            print(f"Fetching chunk for index {index}")
+            book_contents = get_chunk(index, book_id)
+            found = chapter_pattern.findall(book_contents)
+            print(f"Found = {found}")
+            chapter_count += len(found)
+            print(f"Chapter count = {chapter_count}")
 
-        # Calculate the part and chapter counts from the last batch if any
-        if chunk_batch:
-            part_capter_count = process_chunk_for_chapter_and_part(chunk_batch)
-            chapter_count += part_capter_count['chapter_count']
-            part_count += part_capter_count['part_count']
-            print(f"Chapter count final : {chapter_count}, Part count final : {part_count}")
-            chunk_batch.clear()
+        # Combine part + section as you defined
+        total_parts = part_count + section_count
+
+        part_capter_count['chapter_count']=chapter_count
+        part_capter_count['part_count']=total_parts
 
     except Exception as e:
         error = f"Unexpected error: {str(e)}"
@@ -756,7 +746,7 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
         result = {
             "file_id": book_id,
             "chapters": chapter_count,
-            "parts": part_count,
+            "parts": total_parts,
             "error": error
         }
     else:
@@ -784,8 +774,8 @@ async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[
 
 def process_chunk_for_chapter_and_part(chunk_batch:[]):
     batch_text = " ".join(chunk_batch)
-    print(f"First 50 chars of batch_text = {batch_text[0:50]}...")
-    print(f"Last 50 chars of batch_text = {batch_text[-50:]}...")
+    print(f"First 50 chars of batch_text = {batch_text[0:30]}...")
+    print(f"Last 50 chars of batch_text = {batch_text[-30:]}...")
     part_capter_count = fetch_chapter_and_part_counts(batch_text)
     return part_capter_count
 
