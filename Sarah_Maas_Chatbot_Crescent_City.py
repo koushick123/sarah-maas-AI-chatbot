@@ -533,34 +533,29 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
 
                 with open(temp_pdf_path, "rb") as pdf_document:
-                    pages = []
                     full_text = ""
                     reader_for_full_text = PdfReader(pdf_document)
                     # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
                         page = reader_for_full_text.pages[page_num - 1]
                         cleaned_text = clean_text(page.extract_text())
-                        pages.append(cleaned_text)
                         full_text += cleaned_text + " "
 
                     # Split text into chapters by looking for "Chapter" headings
                     chapters = split_into_chapters(full_text)
                     print(f"Total chapters extracted: {len(chapters)}")
-                    # final_chapters = split_long_chapters(chapters, 8000)
-                    # for ch in final_chapters:
-                    #     print(f"Chapter {ch['chapter']} Part {ch['part']} Length: {len(ch['text'])}")
-                    # print(f"Total chapters found: {len(chapters)}")
-
+                    final_chapters = split_long_chapters(chapters, 8000)
+                    
                 book_metadata = {
                     "file_id": book_id,
                     "file_name": f"{book_id}.pdf",
                     "page_count": page_count,
                     "page_for_first_chapter": first_page_num,
-                    "total_chunks": 0,
+                    "total_chunks": len(final_chapters),
                     "total_characters": len(full_text)
                 }
 
-                collection_book_chunk_metadata.insert_one(book_metadata)
+                # collection_book_chunk_metadata.insert_one(book_metadata)
                 for key, value in book_metadata.items():
                     if isinstance(value, ObjectId):
                         book_metadata[key] = str(value)
@@ -595,56 +590,33 @@ def clean_text(page_text):
 
 import re
 
-def normalize(text):
-    text = text.replace("\xa0", " ")
-    text = text.replace("\u200b", "")
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\r\n|\r", "\n", text)
-    return text
-
-
 def split_into_chapters(full_text):
     chapter_regex = re.compile(
-        r"""(?imx)
-        ^\s*
-        (?!\s*(?:acknowledgements|also\ by)\s*$)
-        (
-            (chapter|chap\.?)\s*[\.:]?\s*(\d+|[ivxlcdm]+|[a-z]+)?
-            |
-            \d{1,3}
-            |
-            [ivxlcdm]{1,6}
-            |
-            [A-Z][A-Z\s]{4,}
-            |
-            (prologue|epilogue)
-        )
-        \s*$
-        """,
+        r"chapter[\n\r]?[\s]*[\d]*",
         re.MULTILINE | re.IGNORECASE
     )
 
-    full_text = normalize(full_text)
+    number_regex = re.compile(r"\d")
+    
     chapters = []
     matches = list(chapter_regex.finditer(full_text))
     print(f"Total chapter matches found: {len(matches)}")
 
+    if not matches:
+        matches = list(number_regex.finditer(full_text))
+        print(f"Total chapter number matches found: {len(matches)}")
+    
     for i, match in enumerate(matches):
-        print(f"Match text = {match}")
         start = match.start()
         end = matches[i + 1].start() if i + 1 < len(matches) else len(full_text)
 
-        chapter_title = match.group().strip()
         chapter_number = i + 1
-
         chapter_text = full_text[start:end].strip()
-
+        
         print(f"Chapter number {chapter_number}")
-        print(f"Chapter title {chapter_title}")
-        print(f"Chapter text {chapter_text[:50]}")
+        print(f"Chapter text {chapter_text[:20]}")
         chapters.append({
             "chapter": chapter_number,
-            "title": chapter_title,
             "text": chapter_text
         })
 
