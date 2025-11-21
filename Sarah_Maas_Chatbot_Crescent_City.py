@@ -3,12 +3,10 @@ import asyncio
 import json
 import os
 import tempfile
-import time
 import urllib.parse
 import urllib.parse
 import uuid
 from datetime import datetime
-from typing import AsyncGenerator
 
 import requests
 from bson import ObjectId
@@ -26,7 +24,6 @@ from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, H
 from langchain.schema import Document
 from pydantic import BaseModel
 from pymongo import MongoClient
-from strands import tool
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -380,13 +377,13 @@ def generate_chapter_summary(chapter_to_summarize: Chapter):
         return {"error": "Selected book is not available."}
 
 
-def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: str = "") -> int:    
+def chunk_text(text: str, chunk_size: int = 8000, overlap: int = 100, book_id: str = "") -> int:
     """
     Split text into chunks of specified size with overlap to preserve context and store in MongoDB.
 
     Args:
         text: The full text to chunk
-        chunk_size: Maximum characters per chunk (default 25000 to leave room for instructions)
+        chunk_size: Maximum characters per chunk
         overlap: Number of characters to overlap between chunks for context
         book_id: The unique identifier of the book
 
@@ -399,7 +396,8 @@ def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: 
             collection_book_chunks.insert_one({
                 "index": 0,
                 "book_id": book_id,
-                "chunk": text
+                "chunk": text,
+                "chapter": 1
             })
         return 1
 
@@ -429,6 +427,9 @@ def chunk_text(text: str, chunk_size: int = 25000, overlap: int = 500, book_id: 
         book_cond = {"book_id": book_id}
         if not collection_book_chunks.find_one({"$and": [index_cond, book_cond]}):
             print("Inserting chunk index:", chunk_index)
+            if  chunk_text_value.lower().find("acknowledgements") != -1:
+                print("Acknowledgements found, stopping further chunking.")
+                return chunk_index
             collection_book_chunks.insert_one({
                 "index": chunk_index,
                 "book_id": book_id,
@@ -532,23 +533,30 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
 
                 with open(temp_pdf_path, "rb") as pdf_document:
+                    pages = []
                     full_text = ""
                     reader_for_full_text = PdfReader(pdf_document)
+                    # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
                         page = reader_for_full_text.pages[page_num - 1]
-                        full_text += page.extract_text() or ""
+                        cleaned_text = clean_text(page.extract_text())
+                        pages.append(cleaned_text)
+                        full_text += cleaned_text + " "
 
-                # Chunk the text
-                print(f"Size of full text to chunk: {len(full_text)} characters")
-                chunk_index = chunk_text(full_text, chunk_size, 100, book_id)
-                print(f"📦 Text divided into {(chunk_index+1)} chunks")
+                    # Split text into chapters by looking for "Chapter" headings
+                    chapters = split_into_chapters(full_text)
+                    print(f"Total chapters extracted: {len(chapters)}")
+                    # final_chapters = split_long_chapters(chapters, 8000)
+                    # for ch in final_chapters:
+                    #     print(f"Chapter {ch['chapter']} Part {ch['part']} Length: {len(ch['text'])}")
+                    # print(f"Total chapters found: {len(chapters)}")
 
                 book_metadata = {
                     "file_id": book_id,
                     "file_name": f"{book_id}.pdf",
                     "page_count": page_count,
                     "page_for_first_chapter": first_page_num,
-                    "total_chunks": (chunk_index + 1),
+                    "total_chunks": 0,
                     "total_characters": len(full_text)
                 }
 
@@ -568,6 +576,108 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
             "success": False
         }
 
+
+def clean_text(page_text):
+    # Remove page numbers (common patterns)
+    page_text = re.sub(r"^\s*\d+\s*$", "", page_text, flags=re.MULTILINE)
+
+    # Remove headers
+    page_text = re.sub(r"^\s*.*?Book.*?$", "", page_text, flags=re.MULTILINE)
+
+    # Fix hyphenated line breaks
+    page_text = re.sub(r"-\n", "", page_text)
+
+    # Fix normal line breaks
+    page_text = re.sub(r"\n+", "\n", page_text)
+
+    return page_text.strip()
+
+
+import re
+
+def normalize(text):
+    text = text.replace("\xa0", " ")
+    text = text.replace("\u200b", "")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\r\n|\r", "\n", text)
+    return text
+
+
+def split_into_chapters(full_text):
+    chapter_regex = re.compile(
+        r"""(?imx)
+        ^\s*
+        (?!\s*(?:acknowledgements|also\ by)\s*$)
+        (
+            (chapter|chap\.?)\s*[\.:]?\s*(\d+|[ivxlcdm]+|[a-z]+)?
+            |
+            \d{1,3}
+            |
+            [ivxlcdm]{1,6}
+            |
+            [A-Z][A-Z\s]{4,}
+            |
+            (prologue|epilogue)
+        )
+        \s*$
+        """,
+        re.MULTILINE | re.IGNORECASE
+    )
+
+    full_text = normalize(full_text)
+    chapters = []
+    matches = list(chapter_regex.finditer(full_text))
+    print(f"Total chapter matches found: {len(matches)}")
+
+    for i, match in enumerate(matches):
+        print(f"Match text = {match}")
+        start = match.start()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(full_text)
+
+        chapter_title = match.group().strip()
+        chapter_number = i + 1
+
+        chapter_text = full_text[start:end].strip()
+
+        print(f"Chapter number {chapter_number}")
+        print(f"Chapter title {chapter_title}")
+        print(f"Chapter text {chapter_text[:50]}")
+        chapters.append({
+            "chapter": chapter_number,
+            "title": chapter_title,
+            "text": chapter_text
+        })
+
+    return chapters
+
+
+def split_long_chapters(chapters, max_chars=8000):
+    final_chunks = []
+
+    for ch in chapters:
+        text = ch["text"]
+
+        if len(text) <= max_chars:
+            final_chunks.append({
+                "chapter": ch["chapter"],
+                "part": None,
+                "text": text
+            })
+        else:
+            # split
+            parts = [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+            labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+            for idx, part_text in enumerate(parts):
+                final_chunks.append({
+                    "chapter": ch["chapter"],
+                    "part": labels[idx],
+                    "text": part_text
+                })
+
+    return final_chunks
+
+import re
 
 def find_first_chapter_or_part(text: str):
     # Patterns for "Part", "Chapter" as independent words at line start, number, or Roman numeral
@@ -625,161 +735,9 @@ def get_first_and_last_index_of_part_or_chapter(page_text: str, part_or_chapter:
 
     return firstindex, lastindex
 
-import re
-
-def fetch_chapter_and_part_counts(text_to_be_analyzed: str) -> dict[str, int]:
-    system_message = (
-        "You are a strict text-analysis tool.\n"
-        "\n"
-        "MANDATORY RULES:\n"
-        "1. Treat THIS INPUT as completely independent.\n"
-        "2. You have NO MEMORY of any previous text.\n"
-        "3. NEVER assume continuity between chunks.\n"
-        "4. ALWAYS reset chapter_count = 0 and part_count = 0 before counting.\n"
-        "5. ONLY use EXACTLY the text in {context}; ignore all external knowledge.\n"
-        "6. Count the words 'chapter', 'part', and 'section' (case-insensitive).\n"
-        "7. Do NOT infer or add chapter numbers based on patterns.\n"
-        "8. If the chunk contains: CHAPTER 57 → count = 1 (not cumulative).\n"
-    )
-
-    chat_prompt = ChatPromptTemplate.from_messages([
-        SystemMessagePromptTemplate.from_template(system_message),
-
-        HumanMessagePromptTemplate.from_template(
-            "Answer the below question. Do NOT use memory. Do NOT assume continuity.\n"
-            "\n"
-            "Context:\n{context}\n"
-            "Question: \n{question}\n"
-            "\n"
-            "Return ONLY this JSON object:\n"
-            "\n"
-            "  \"chapter_count\": <number_of_chapters>,\n"
-            "  \"part_count\": <number_of_parts>\n"
-            ""
-        ),
-    ])
-
-    selected_llm = ChatOpenAI(model="gpt-4o", temperature=0.0)
-
-    chain = LLMChain(llm=selected_llm, prompt=chat_prompt)
-
-    raw_result = chain.invoke(
-        {
-            "context": text_to_be_analyzed,
-            "question": "Count number of times chapter/part/section appears ONLY inside this chunk."
-        }
-    )["text"]
-
-    # ---- Extract JSON safely ----
-    match = re.search(r"\{.*\}", raw_result, re.DOTALL)
-    if not match:
-        raise ValueError(f"LLM did not return JSON. Got:\n{raw_result}")
-
-    json_text = match.group(0)
-
-    try:
-        parsed = json.loads(json_text)
-        print(f"Parsed JSON: {parsed}")
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON returned: {e}\nRaw: {json_text}")
-
-    return {
-        "chapter_count": parsed["chapter_count"],
-        "part_count": parsed["part_count"],
-    }
-
-
-async def stream_book_analysis(book_id: str, chunk_size: int) -> AsyncGenerator[str, None]:
-    """
-    Streams the book analysis process in real-time with chunked processing.
-
-    Args:
-        book_id: The ID of the book to analyze
-        chunk_size: Total number of chunks to process
-
-    Yields:
-        Server-Sent Events (SSE) formatted strings with analysis progress
-    """
-    # Multi-step user instruction for chunked analysis with rate limiting
-    print(f"Starting book analysis for book_id: {book_id} with chunk_size: {chunk_size}")
-
-    # Send initial status
-    yield f"data: {json.dumps({'status': 'started', 'message': 'Initializing book analysis...'})}\n\n"
-
-    # Send downloading status
-    yield f"data: {json.dumps({'status': 'downloading', 'message': 'Fetching and chunking book content...', 'total_chunks': chunk_size})}\n\n"
-
-    # Send analyzing status
-    yield f"data: {json.dumps({'status': 'analyzing', 'message': 'Processing chunks and analyzing structure...'})}\n\n"
-
-    book_contents:str = ""
-    error = None
-    chapter_count = 0
-    total_parts = 0
-    part_count = 0
-    section_count = 0
-    part_capter_count: dict[str, int] = {}
-    try:
-        # Case-insensitive regex patterns
-        chapter_pattern = re.compile(r"\bchapter\b(?:\s+\d+)?(?:\s*[-:])?|chapter\s*$", re.IGNORECASE | re.MULTILINE)
-        for index in range(0, chunk_size):
-            print(f"Fetching chunk for index {index}")
-            book_contents = get_chunk(index, book_id)
-            found = chapter_pattern.findall(book_contents)
-            print(f"Found = {found}")
-            chapter_count += len(found)
-            print(f"Chapter count = {chapter_count}")
-
-        # Combine part + section as you defined
-        total_parts = part_count + section_count
-
-        part_capter_count['chapter_count']=chapter_count
-        part_capter_count['part_count']=total_parts
-
-    except Exception as e:
-        error = f"Unexpected error: {str(e)}"
-        print(error)
-
-    if part_capter_count.keys():
-        result = {
-            "file_id": book_id,
-            "chapters": chapter_count,
-            "parts": total_parts,
-            "error": error
-        }
-    else:
-        result = {
-            "file_id": book_id,
-            "chapters": 0,
-            "parts": 0,
-            "error": error
-        }
-
-    try:
-        # Send completion status with the analysis result
-        yield f"data: {json.dumps({'status': 'completed', 'message': 'Book analysis completed successfully', 'result': result})}\n\n"
-
-    except Exception as e:
-        # Send error with details
-        error_message = str(e)
-        yield f"data: {json.dumps({'status': 'error', 'message': f'Analysis failed: {error_message}'})}\n\n"
-        print(error_message)
-
-    finally:
-        # Send done signal
-        yield "data: [DONE]\n\n"
-
-
-def process_chunk_for_chapter_and_part(chunk_batch:[]):
-    batch_text = " ".join(chunk_batch)
-    print(f"First 50 chars of batch_text = {batch_text[0:30]}...")
-    print(f"Last 50 chars of batch_text = {batch_text[-30:]}...")
-    part_capter_count = fetch_chapter_and_part_counts(batch_text)
-    return part_capter_count
-
 
 @app.get("/book/staging/{book_id}/analyze")
-async def book_analysis_agent(book_id: str):
+async def book_analysis(book_id: str):
     """
     Streams the book analysis process in real-time using Server-Sent Events (SSE).
 
@@ -805,18 +763,6 @@ async def book_analysis_agent(book_id: str):
             return {"error": f"Book staging record not found for {book_id}."}
 
     print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
-    if number_of_chunks > 0:
-        return StreamingResponse(
-            stream_book_analysis(book_id, number_of_chunks),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no",  # Disable nginx buffering
-            }
-        )
-    else:
-        return {"error": f"No chunks available for analysis for book_id: {book_id}."}
 
 
 @app.delete("/book/staging/{book_id}/chunks/delete")
@@ -827,10 +773,14 @@ def delete_chunks(book_id: str):
     Args:
         book_id: The unique identifier of the book whose chunks are to be deleted.
     """
-    result = collection_book_chunks.delete_many({"book_id": book_id})
-    print(f"{result}")
-    print(f"Deleted {result.deleted_count} chunks for book_id: {book_id}")
-
+    try:
+        result = collection_book_chunks.delete_many({"book_id": book_id})
+        print(f"{result}")
+        print(f"Deleted {result.deleted_count} chunks for book_id: {book_id}")
+        return {"success": True, "deleted_count": result.deleted_count, "book_id": book_id}
+    except Exception as del_excep:
+        print(f"Exception in delete = {str(del_excep)}")
+        return {"success": False, "error": str(del_excep), "deleted_count": 0, "book_id": book_id}
 
 @app.delete("/book/staging/{book_id}/chunk-metadata/delete")
 def delete_chunk_metadata(book_id: str):
