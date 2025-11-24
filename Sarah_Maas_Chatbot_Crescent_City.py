@@ -454,6 +454,7 @@ def get_chunk(index: int, book_id: str) -> str:
 
     return book_chunk["chunk"]
 
+from PyPDF2 import PdfWriter
 
 @app.get("/book/staging/{book_id}/chunks")
 def get_book_chunks(book_id: str, chunk_size: int = 25000):
@@ -534,17 +535,28 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
 
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
+                    pages = []
                     reader_for_full_text = PdfReader(pdf_document)
                     # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
                         page = reader_for_full_text.pages[page_num - 1]
-                        cleaned_text = clean_text(page.extract_text())
-                        full_text += cleaned_text + " "
+                        writer = PdfWriter()
+                        writer.add_page(page)
+                        output_path = f"pages_for_OCR/page_{book_id}_{page_num}.pdf"
+                        with open(output_path, "wb") as out_file:
+                            writer.write(out_file)
+                            print("Written page for OCR analysis:", output_path)
+                        full_text += clean_text(page.extract_text()) + " "
+                        pages.append(page)
 
                     # Split text into chapters by looking for "Chapter" headings
                     chapters = split_into_chapters(full_text)
                     print(f"Total chapters extracted: {len(chapters)}")
-                    final_chapters = split_long_chapters(chapters, 8000)
+                    if chapters:
+                        final_chapters = split_long_chapters(chapters, 8000)
+                    else:
+                        for page_num in range(first_page_num, int(page_count)):
+                            extract_text_with_ocr(f"pages_for_OCR/page_{book_id}_{page_num}.pdf")
                     
                 book_metadata = {
                     "file_id": book_id,
@@ -572,6 +584,31 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
         }
 
 
+import fitz  # PyMuPDF
+from PIL import Image
+import pytesseract
+# DUE TO PYCHARM FLATPAK BEING A SANDBOX I NEED TO HARDCODE PATH DUE TO RESTRICTED LIB ACCESS
+# TEMPORARY SOLUTION ONLY
+pytesseract.pytesseract.tesseract_cmd = os.path.expanduser('~/.local/bin/tesseract')
+os.environ['TESSDATA_PREFIX'] = os.path.expanduser('~/.local/share/tessdata')
+import io
+
+def extract_text_with_ocr(pdf_path):
+    doc = fitz.open(pdf_path)
+    page = doc[0]  # First page
+
+    # Convert page to image
+    pix = page.get_pixmap(dpi=300)
+    img_data = pix.tobytes("png")
+    img = Image.open(io.BytesIO(img_data))
+
+    # OCR the image
+    page_text = pytesseract.image_to_string(img)
+    print(f"OCR Page Text ====== {page_text[:50]}")
+
+    doc.close()
+
+
 def clean_text(page_text):
     # Remove page numbers (common patterns)
     page_text = re.sub(r"^\s*\d+\s*$", "", page_text, flags=re.MULTILINE)
@@ -587,8 +624,6 @@ def clean_text(page_text):
 
     return page_text.strip()
 
-
-import re
 
 def split_into_chapters(full_text):
     chapter_regex = re.compile(
@@ -625,6 +660,7 @@ def split_into_chapters(full_text):
 
 def split_long_chapters(chapters, max_chars=8000):
     final_chunks = []
+    page_number = 1
 
     for ch in chapters:
         text = ch["text"]
@@ -633,7 +669,8 @@ def split_long_chapters(chapters, max_chars=8000):
             final_chunks.append({
                 "chapter": ch["chapter"],
                 "part": None,
-                "text": text
+                "text": text,
+                "page_number": page_number
             })
         else:
             # split
@@ -644,8 +681,13 @@ def split_long_chapters(chapters, max_chars=8000):
                 final_chunks.append({
                     "chapter": ch["chapter"],
                     "part": labels[idx],
-                    "text": part_text
+                    "text": part_text,
+                    "page_number": page_number
                 })
+                if idx < len(parts) - 1:
+                    page_number += 1
+
+        page_number += 1
 
     return final_chunks
 

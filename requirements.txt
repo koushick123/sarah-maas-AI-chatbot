@@ -8,3 +8,6 @@ uvicorn
 pymongo
 requests
 strands-agents
+pytesseract
+PyMuPDF
+Pillow
