@@ -123,7 +123,7 @@ def decrypt_azure_ocr_api():
     return fernet.decrypt(encrypted_azure_ocr_api).decode()
 
 
-def decrypt_azure_ocr_api():
+def decrypt_azure_ocr_host():
     """
     Function to decrypt Azure OCR Host.
     """
@@ -562,7 +562,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     pages = []
-                    length_for_test = 42
+                    length_for_test = 10
                     reader_for_full_text = PdfReader(pdf_document)
                     # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
@@ -629,7 +629,7 @@ from msrest.authentication import CognitiveServicesCredentials
 import time
 
 # Your Azure credentials
-endpoint = "https://sarah-maas-ocr.cognitiveservices.azure.com/"
+endpoint = decrypt_azure_ocr_host()
 subscription_key = decrypt_azure_ocr_api()
 
 # Authenticate
@@ -638,10 +638,7 @@ client = ComputerVisionClient(endpoint, credentials)
 
 
 def ocr_image(image_path):
-    """Extract text from image using Azure Read API"""
-
     api_count = 0
-
     # Open image file
     with open(image_path, "rb") as image_file:
         # Call API with image
@@ -655,9 +652,11 @@ def ocr_image(image_path):
         read_result = client.get_read_result(operation_id)
         if read_result.status not in [OperationStatusCodes.running, OperationStatusCodes.not_started]:
             break
-        if api_count == 15:
+        if api_count == 18:
             print("Wait for 1 minute before retrying Azure OCR API...")
             time.sleep(60)
+            print("Resuming...")
+            api_count = 1
         api_count += 1
 
     # Extract text from result

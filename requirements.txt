@@ -8,6 +8,4 @@ uvicorn
 pymongo
 requests
 strands-agents
-pytesseract
-PyMuPDF
-Pillow
+azure.cognitiveservices.vision.computervision
