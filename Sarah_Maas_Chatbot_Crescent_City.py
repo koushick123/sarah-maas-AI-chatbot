@@ -110,6 +110,32 @@ def decrypt_mongo_hosturl():
     return fernet.decrypt(encrypted_mongo_hosturl).decode()
 
 
+def decrypt_azure_ocr_api():
+    """
+    Function to decrypt Azure OCR API.
+    """
+    encryptionkey = fetch_decryption_key_from_vault("FERNET_KEY_AZURE_OCR_KEY")  # Fetch the encryption key from Vault
+    if not encryptionkey:
+        raise ValueError("FERNET_KEY_AZURE_OCR_KEY not set")
+    fernet = Fernet(encryptionkey)
+    with open("encryptedazureocrapi.txt") as file:
+        encrypted_azure_ocr_api = file.read().encode()
+    return fernet.decrypt(encrypted_azure_ocr_api).decode()
+
+
+def decrypt_azure_ocr_api():
+    """
+    Function to decrypt Azure OCR Host.
+    """
+    encryptionkey = fetch_decryption_key_from_vault("FERNET_KEY_AZURE_OCR_HOST")  # Fetch the encryption key from Vault
+    if not encryptionkey:
+        raise ValueError("FERNET_KEY_AZURE_OCR_HOST not set")
+    fernet = Fernet(encryptionkey)
+    with open("encryptedazureocrhost.txt") as file:
+        encrypted_azure_ocr_api = file.read().encode()
+    return fernet.decrypt(encrypted_azure_ocr_api).decode()
+
+
 def fetch_vault_token() -> str:
     """
     Fetch Vault access token by retrieving VM metadata (vmId, publicKeys)
@@ -536,18 +562,27 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     pages = []
+                    length_for_test = 42
                     reader_for_full_text = PdfReader(pdf_document)
                     # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
                         page = reader_for_full_text.pages[page_num - 1]
+                        full_text += clean_text(page.extract_text()) + " "
+                        pages.append(page)
+
                         writer = PdfWriter()
                         writer.add_page(page)
-                        output_path = f"pages_for_OCR/page_{book_id}_{page_num}.pdf"
+                        output_path = f"pages_for_OCR/page_{book_id}_{page_num}.jpg"
+                        if os.path.exists(output_path):
+                            if len(pages) == length_for_test:
+                                break
+                            continue
                         with open(output_path, "wb") as out_file:
                             writer.write(out_file)
                             print("Written page for OCR analysis:", output_path)
-                        full_text += clean_text(page.extract_text()) + " "
-                        pages.append(page)
+
+                        if len(pages) == length_for_test:
+                            break
 
                     # Split text into chapters by looking for "Chapter" headings
                     chapters = split_into_chapters(full_text)
@@ -556,7 +591,11 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         final_chapters = split_long_chapters(chapters, 8000)
                     else:
                         for page_num in range(first_page_num, int(page_count)):
-                            extract_text_with_ocr(f"pages_for_OCR/page_{book_id}_{page_num}.pdf")
+                            text = ocr_image(f"pages_for_OCR/page_{book_id}_{page_num}.jpg")
+                            print(text[:50])
+                            if page_num == (first_page_num + length_for_test) - 1:
+                                break
+
                     
                 book_metadata = {
                     "file_id": book_id,
@@ -584,29 +623,51 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
         }
 
 
-import fitz  # PyMuPDF
-from PIL import Image
-import pytesseract
-# DUE TO PYCHARM FLATPAK BEING A SANDBOX I NEED TO HARDCODE PATH DUE TO RESTRICTED LIB ACCESS
-# TEMPORARY SOLUTION ONLY
-pytesseract.pytesseract.tesseract_cmd = os.path.expanduser('~/.local/bin/tesseract')
-os.environ['TESSDATA_PREFIX'] = os.path.expanduser('~/.local/share/tessdata')
-import io
+from azure.cognitiveservices.vision.computervision import ComputerVisionClient
+from azure.cognitiveservices.vision.computervision.models import OperationStatusCodes
+from msrest.authentication import CognitiveServicesCredentials
+import time
 
-def extract_text_with_ocr(pdf_path):
-    doc = fitz.open(pdf_path)
-    page = doc[0]  # First page
+# Your Azure credentials
+endpoint = "https://sarah-maas-ocr.cognitiveservices.azure.com/"
+subscription_key = decrypt_azure_ocr_api()
 
-    # Convert page to image
-    pix = page.get_pixmap(dpi=300)
-    img_data = pix.tobytes("png")
-    img = Image.open(io.BytesIO(img_data))
+# Authenticate
+credentials = CognitiveServicesCredentials(subscription_key)
+client = ComputerVisionClient(endpoint, credentials)
 
-    # OCR the image
-    page_text = pytesseract.image_to_string(img)
-    print(f"OCR Page Text ====== {page_text[:50]}")
 
-    doc.close()
+def ocr_image(image_path):
+    """Extract text from image using Azure Read API"""
+
+    api_count = 0
+
+    # Open image file
+    with open(image_path, "rb") as image_file:
+        # Call API with image
+        read_response = client.read_in_stream(image_file, raw=True)
+
+    # Get operation ID from response headers
+    operation_id = read_response.headers["Operation-Location"].split("/")[-1]
+
+    # Wait for the operation to complete
+    while True:
+        read_result = client.get_read_result(operation_id)
+        if read_result.status not in [OperationStatusCodes.running, OperationStatusCodes.not_started]:
+            break
+        if api_count == 15:
+            print("Wait for 1 minute before retrying Azure OCR API...")
+            time.sleep(60)
+        api_count += 1
+
+    # Extract text from result
+    text = []
+    if read_result.status == OperationStatusCodes.succeeded:
+        for page in read_result.analyze_result.read_results:
+            for line in page.lines:
+                text.append(line.text)
+
+    return "\n".join(text)
 
 
 def clean_text(page_text):
