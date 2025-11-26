@@ -562,7 +562,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     pages = []
-                    length_for_test = 10
+                    length_for_test = 1
                     reader_for_full_text = PdfReader(pdf_document)
                     # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
@@ -590,9 +590,11 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     if chapters:
                         final_chapters = split_long_chapters(chapters, 8000)
                     else:
+                        final_chapters = []
                         for page_num in range(first_page_num, int(page_count)):
                             text = ocr_image(f"pages_for_OCR/page_{book_id}_{page_num}.jpg")
                             print(text[:50])
+
                             if page_num == (first_page_num + length_for_test) - 1:
                                 break
 
@@ -652,12 +654,7 @@ def ocr_image(image_path):
         read_result = client.get_read_result(operation_id)
         if read_result.status not in [OperationStatusCodes.running, OperationStatusCodes.not_started]:
             break
-        if api_count == 18:
-            print("Wait for 1 minute before retrying Azure OCR API...")
-            time.sleep(60)
-            print("Resuming...")
-            api_count = 1
-        api_count += 1
+        time.sleep(2)
 
     # Extract text from result
     text = []
