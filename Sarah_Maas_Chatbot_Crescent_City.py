@@ -563,7 +563,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     pages = []
-                    length_for_test = 1
+                    length_for_test = 2
                     reader_for_full_text = PdfReader(pdf_document)
                     pdf_doc = fitz.open(pdf_document)
                     # Extract text from first chapter page to end and clean it
@@ -597,7 +597,6 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         final_chapters = []
                         for page_num in range(first_page_num, int(page_count)):
                             text = azure_ocr_extract_text(f"pages_for_OCR/page_{book_id}_{page_num}.jpg")
-                            print(text[:50])
                             if page_num == (first_page_num + length_for_test) - 1:
                                 break
 
@@ -654,8 +653,9 @@ def azure_ocr_extract_text(image_path: str) -> str:
         extracted_text = []
         if analysis.read:
             for line in analysis.read.blocks:
-                extracted_text.append(line.lines)
-                extracted_text.append("\n")
+                for linecontent in line.lines:
+                    print(f"Content: {linecontent.text}")
+                    extracted_text.append(linecontent.text)
 
         return extracted_text
     except Exception as e:
