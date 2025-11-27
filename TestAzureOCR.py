@@ -7,7 +7,7 @@ from Sarah_Maas_Chatbot_Crescent_City import decrypt_azure_ocr_api, decrypt_azur
 endpoint = decrypt_azure_ocr_host()
 subscription_key = decrypt_azure_ocr_api()
 
-def azure_ocr_extract_text(image_path: str) -> str: 
+def azure_ocr_extract_text(image_path: str) -> list[str]:
     try:
         client = ImageAnalysisClient(
             endpoint=endpoint,
@@ -23,16 +23,19 @@ def azure_ocr_extract_text(image_path: str) -> str:
         extracted_text = []
         if analysis.read:
             for line in analysis.read.blocks:
-                extracted_text.append(line.lines)
-                extracted_text.append("\n")
+                print(f"Line = {line.lines}")
+                for linecontent in line.lines:
+                    print(f"Content: {linecontent.text}")
+                    extracted_text.append(line.lines)
 
         return extracted_text
     except Exception as e:
         print(f"Error during Azure OCR: {str(e)}")
-        return ""
-    
+        return []
+
 if __name__ == "__main__":
-    test_image_path = "output_default.jpg"  # Replace with your test image path
+    #test_image_path = "output_default.jpg"  # Replace with your test image path
+    test_image_path = "pages_for_OCR/page_empire-of-storms-20251105130926-b633ff79_21.jpg"  # Replace with your test image path
     text = azure_ocr_extract_text(test_image_path)
     print("Extracted Text:")
     print(text)

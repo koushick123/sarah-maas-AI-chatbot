@@ -480,7 +480,8 @@ def get_chunk(index: int, book_id: str) -> str:
 
     return book_chunk["chunk"]
 
-from PyPDF2 import PdfWriter
+
+import fitz
 
 @app.get("/book/staging/{book_id}/chunks")
 def get_book_chunks(book_id: str, chunk_size: int = 25000):
@@ -564,21 +565,24 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     pages = []
                     length_for_test = 1
                     reader_for_full_text = PdfReader(pdf_document)
+                    pdf_doc = fitz.open(pdf_document)
                     # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
                         page = reader_for_full_text.pages[page_num - 1]
                         full_text += clean_text(page.extract_text()) + " "
                         pages.append(page)
 
-                        writer = PdfWriter()
-                        writer.add_page(page)
                         output_path = f"pages_for_OCR/page_{book_id}_{page_num}.jpg"
                         if os.path.exists(output_path):
                             if len(pages) == length_for_test:
                                 break
                             continue
-                        with open(output_path, "wb") as out_file:
-                            writer.write(out_file)
+                        else:
+                            # Convert to image
+                            fitz_page = pdf_doc[page_num - 1]
+                            pix = fitz_page.get_pixmap(dpi=300)
+                            pix.save(output_path)
+                            print(f"✓ Created: {output_path}")
                             print("Written page for OCR analysis:", output_path)
 
                         if len(pages) == length_for_test:
@@ -594,10 +598,10 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         for page_num in range(first_page_num, int(page_count)):
                             text = azure_ocr_extract_text(f"pages_for_OCR/page_{book_id}_{page_num}.jpg")
                             print(text[:50])
-
                             if page_num == (first_page_num + length_for_test) - 1:
                                 break
 
+                pdf_doc.close()
                     
                 book_metadata = {
                     "file_id": book_id,

@@ -45,7 +45,7 @@ def create_image_from_list_default_font(text_list, filename="output_default.jpg"
     print(f"Successfully created image: {filename}")
 
 # --- Example Usage ---
-my_list = [
+my_list = ["CHAPTER 1\n\n"
     "This text uses the default font.",
     "No specific font settings were applied.",
     "Pillow handles everything automatically.",
