@@ -562,7 +562,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     pages = []
-                    length_for_test = 10
+                    length_for_test = 1
                     reader_for_full_text = PdfReader(pdf_document)
                     # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
@@ -590,9 +590,11 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     if chapters:
                         final_chapters = split_long_chapters(chapters, 8000)
                     else:
+                        final_chapters = []
                         for page_num in range(first_page_num, int(page_count)):
-                            text = ocr_image(f"pages_for_OCR/page_{book_id}_{page_num}.jpg")
+                            text = azure_ocr_extract_text(f"pages_for_OCR/page_{book_id}_{page_num}.jpg")
                             print(text[:50])
+
                             if page_num == (first_page_num + length_for_test) - 1:
                                 break
 
@@ -623,50 +625,38 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
         }
 
 
-from azure.cognitiveservices.vision.computervision import ComputerVisionClient
-from azure.cognitiveservices.vision.computervision.models import OperationStatusCodes
-from msrest.authentication import CognitiveServicesCredentials
-import time
+import os
+from azure.ai.vision.imageanalysis import ImageAnalysisClient
+from azure.ai.vision.imageanalysis.models import VisualFeatures
+from azure.core.credentials import AzureKeyCredential
 
 # Your Azure credentials
 endpoint = decrypt_azure_ocr_host()
 subscription_key = decrypt_azure_ocr_api()
 
-# Authenticate
-credentials = CognitiveServicesCredentials(subscription_key)
-client = ComputerVisionClient(endpoint, credentials)
+def azure_ocr_extract_text(image_path: str) -> str:
+    try:
+        client = ImageAnalysisClient(
+            endpoint=endpoint,
+            credential=AzureKeyCredential(subscription_key)
+        )
 
+        with open(image_path, "rb") as image_stream:
+            analysis = client.analyze(
+                image_data=image_stream.read(),
+                visual_features=[VisualFeatures.READ]
+            )
 
-def ocr_image(image_path):
-    api_count = 0
-    # Open image file
-    with open(image_path, "rb") as image_file:
-        # Call API with image
-        read_response = client.read_in_stream(image_file, raw=True)
+        extracted_text = []
+        if analysis.read:
+            for line in analysis.read.blocks:
+                extracted_text.append(line.lines)
+                extracted_text.append("\n")
 
-    # Get operation ID from response headers
-    operation_id = read_response.headers["Operation-Location"].split("/")[-1]
-
-    # Wait for the operation to complete
-    while True:
-        read_result = client.get_read_result(operation_id)
-        if read_result.status not in [OperationStatusCodes.running, OperationStatusCodes.not_started]:
-            break
-        if api_count == 18:
-            print("Wait for 1 minute before retrying Azure OCR API...")
-            time.sleep(60)
-            print("Resuming...")
-            api_count = 1
-        api_count += 1
-
-    # Extract text from result
-    text = []
-    if read_result.status == OperationStatusCodes.succeeded:
-        for page in read_result.analyze_result.read_results:
-            for line in page.lines:
-                text.append(line.text)
-
-    return "\n".join(text)
+        return extracted_text
+    except Exception as e:
+        print(f"Error during Azure OCR: {str(e)}")
+        return ""
 
 
 def clean_text(page_text):
