@@ -7,5 +7,5 @@ cryptography
 uvicorn
 pymongo
 requests
-strands-agents
-azure.cognitiveservices.vision.computervision
+azure.ai.vision.imageanalysis
+azure.core.credentials
