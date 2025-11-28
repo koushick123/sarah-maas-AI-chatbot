@@ -563,7 +563,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     pages = []
-                    length_for_test = 2
+                    length_for_test = 70
                     reader_for_full_text = PdfReader(pdf_document)
                     pdf_doc = fitz.open(pdf_document)
                     # Extract text from first chapter page to end and clean it
@@ -850,6 +850,7 @@ def delete_chunks(book_id: str):
         print(f"Exception in delete = {str(del_excep)}")
         return {"success": False, "error": str(del_excep), "deleted_count": 0, "book_id": book_id}
 
+
 @app.delete("/book/staging/{book_id}/chunk-metadata/delete")
 def delete_chunk_metadata(book_id: str):
     """
@@ -933,6 +934,29 @@ async def upload_book_pdf(
             "X-Accel-Buffering": "no"
         }
     )
+
+#API to delete from staging
+@app.delete("/book/staging/{book_id}/delete")
+def delete_book_staging(book_id: str):
+    """
+    Delete staging record and associated PDF from GridFS.
+    """
+    try:
+        # Find staging document
+        doc = collection_book_staging.find_one({"book_id": book_id})
+        if not doc:
+            return {"error": "Book not found"}
+
+        # Delete PDF from GridFS
+        file_id = ObjectId(doc["file_id"])
+        fs.delete(file_id)
+
+        # Delete staging document
+        collection_book_staging.delete_one({"book_id": book_id})
+
+        return {"message": "Book staging record and PDF deleted successfully."}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 # API to download PDF
