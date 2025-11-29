@@ -1,7 +1,6 @@
 from tinydb import TinyDB, Query
 db = TinyDB('map_of_page_nos_chapter_heading.json')
 
-import regex
 
 ChapterHeading = Query()
 
@@ -24,17 +23,15 @@ if __name__ == "__main__":
 
     # Pattern: Match empty OR (non-ASCII chars + optional digits/symbols)
     # Exclude any line with ASCII letters
-    pattern = re.compile(r'^(?:[^\x00-\x7fa-zA-Z]+|)$')
+    filtered = [line for line in lines
 
-    filtered = [line for line in lines if not re.search(r'[a-zA-Z]', line) and 
-                (not line or re.search(r'[^\x00-\x7f]', line))]
+                if not re.search(r'[a-zA-Z]{2,}', line)  # Exclude 2+ consecutive letters
+                and (not line or
+                     re.search(r'[^\x00-\x7f]', line) or
+                     line.isspace() or
+                     re.search(r'\d', line))
+                ]
 
-    # Alternative simpler version
-    filtered = [
-        line for line in lines 
-        if not re.search(r'[a-zA-Z]', line)  # No ASCII letters
-        and (not line.strip() or re.search(r'[^\x00-\x7f]', line))  # Empty OR has non-ASCII
-    ]
 
     with open('filtered_results.txt', 'w', encoding='utf-8') as f:
         f.write(';'.join(filtered))
@@ -42,5 +39,4 @@ if __name__ == "__main__":
     print("--- Filtered Results ---")
     for idx, item in enumerate(filtered, 1):
         display = f"'{item}'" if item else "'' (empty)"
-        if display != '\n':
-            print(f"{idx}. {display.strip()}")
+        print(f"{idx}. {item}")
