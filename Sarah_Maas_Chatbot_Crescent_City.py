@@ -563,7 +563,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     pages = []
-                    length_for_test = 70
+                    length_for_test = 530
                     reader_for_full_text = PdfReader(pdf_document)
                     pdf_doc = fitz.open(pdf_document)
                     # Extract text from first chapter page to end and clean it
@@ -654,7 +654,6 @@ def azure_ocr_extract_text(image_path: str) -> str:
         if analysis.read:
             for line in analysis.read.blocks:
                 for linecontent in line.lines:
-                    print(f"Content: {linecontent.text}")
                     extracted_text.append(linecontent.text)
 
         return extracted_text
@@ -873,8 +872,7 @@ async def upload_book_pdf(
     """
     # Read file content BEFORE the generator starts
     file_content = await file.read()
-    original_filename = file.filename
-
+    
     async def event_generator():
         try:
             # Send initial status

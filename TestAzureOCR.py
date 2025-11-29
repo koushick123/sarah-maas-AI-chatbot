@@ -10,7 +10,7 @@ subscription_key = decrypt_azure_ocr_api()
 from PIL import Image
 import io
 
-def azure_ocr_extract_header(image_path: str) -> list[str]:
+def azure_ocr_extract_header(image_path: str):
     """
     Crop the top region of the page to force OCR to detect page/section numbers.
     """
@@ -61,7 +61,7 @@ import time
 credentials = CognitiveServicesCredentials(subscription_key)
 client = ComputerVisionClient(endpoint, credentials)
 
-def ocr_image(image_path):
+def ocr_image(image_path, api_count) -> tuple[str, int]:
 
     # Load image with Pillow
     img = Image.open(image_path)
@@ -75,9 +75,7 @@ def ocr_image(image_path):
     # Convert cropped image to bytes
     buffer = io.BytesIO()
     header_crop.save(buffer, format="PNG")
-    header_bytes = buffer.getvalue()
-
-    api_count = 0
+    header_bytes = buffer.getvalue()   
 
     # Call API with image
     read_response = client.read_in_stream(io.BytesIO(header_bytes), raw=True)
@@ -90,16 +88,11 @@ def ocr_image(image_path):
     # Wait for the operation to complete
     while True:
         read_result = client.get_read_result(operation_id)
+        api_count += 1
         if read_result.status not in [OperationStatusCodes.running, OperationStatusCodes.not_started]:
             break
-        if api_count == 18:
-            print("Wait for 1 minute to avoid 429 error from Azure OCR API...")
-            time.sleep(60)
-            print("Resuming...")
-            api_count = 1
-        print("Wait for 2 secs before checking OCR result...")
-        time.sleep(5)
-        api_count += 1
+        print(f"Wait for 2 secs before checking OCR result...{api_count}")
+        time.sleep(2)
 
     # Extract text from result
     text = []
@@ -108,13 +101,33 @@ def ocr_image(image_path):
             for line in page.lines:
                 text.append(line.text)
 
-    return "\n".join(text)
+    return "\n".join(text), api_count
 
+from tinydb import TinyDB, Query
+db = TinyDB('map_of_page_nos_chapter_heading.json')
 
 if __name__ == "__main__":
-    #test_image_path = "output_default.jpg"  # Replace with your test image path
-    test_image_path = "pages_for_OCR/page_empire-of-storms-20251105130926-b633ff79_22.jpg"  # Replace with your test image path
-    #text = azure_ocr_extract_text(test_image_path)
-    text =ocr_image(test_image_path)
-    print("Extracted Text:")
-    print(text)
+    api_count = 0
+    ChapterMetaData = Query()
+    for page_num in range(21, 550):
+        if db.search(ChapterMetaData.page_num == page_num):
+            print(f"Page {page_num} found in database, skipping...")
+            continue  # Skip pages already in the database
+        test_image_path = f"pages_for_OCR/page_empire-of-storms-20251128095023-0d555bf7_{page_num}.jpg"
+        try:
+            text, api_count = ocr_image(test_image_path, api_count)
+        except Exception as e:
+            print(f"Error processing page {page_num} after wait: {str(e)}")
+            if str(e).find("Too Many Requests") != -1:
+                print("API call limit reached for free tier. Wait for a minute...")
+                time.sleep(60)  # Wait for a minute before continuing
+                api_count = 0  # Reset API count after waiting
+                print(f"Redo OCR processing for {page_num-1}")
+                page_num -= 1
+                continue
+                    
+        db.insert({'page_num': page_num, 'extracted_text': text[:20]})
+        print(f"Extracted Text from page {page_num}:")
+        print(text)
+        print("--------------------------------------------------")
+    
