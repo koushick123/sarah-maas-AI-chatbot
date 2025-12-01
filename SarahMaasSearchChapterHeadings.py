@@ -1,3 +1,4 @@
+import re
 from tinydb import TinyDB, Query
 db = TinyDB('map_of_page_nos_chapter_heading.json')
 
@@ -15,34 +16,35 @@ def cleanup_text(text: str) -> str:
     text = text.strip()  # Trim leading/trailing spaces
     return text
     
-import re
 
-def filter_chapter_headings_for_chapter_beginning(start, end) -> list[str]:
-    # Your document text
-    lines = extract_chapter_text_from_db(start, end)
+def filter_chapter_headings_for_chapter_beginning(start, end) -> dict[int, str]:
+    page_num_with_chapter_headings = {}
+    while start < end:
+        line = extract_chapter_text_from_db(start)
+        # Pattern: Match empty OR (non-ASCII chars + optional digits/symbols)
+        # Exclude any line with ASCII letters
+        if check_if_chapter_heading(line):
+            page_num_with_chapter_headings[start] = line
+            print(f"Chapter heading found on page {start}: {line}")
+        start += 1
+    return page_num_with_chapter_headings
 
-    # Pattern: Match empty OR (non-ASCII chars + optional digits/symbols)
-    # Exclude any line with ASCII letters
-    filtered = []
-    for line in lines:
-        # if "\n" in line:
-        #     line = line.replace("\n", "")
-        line = cleanup_text(line)
+def check_if_chapter_heading(line: str) -> bool:
+    line = cleanup_text(line)
 
-        # Skip empty or whitespace-only lines
-        if not line or not line.strip():
-            line='(empty)'
-            filtered.append(line)
+    # Skip empty or whitespace-only lines
+    if not line or not line.strip():
+        line='(empty)'
+        return True
 
-        # Skip lines with alphabets
-        if re.search(r'[a-zA-Z]', line):
-            # But keep if it has digits
-            if re.search(r'\d', line) or re.search(r'^[a-zA-Z]{1,3}$', line):
-                filtered.append(line)
-            continue
-
-        # Keep if has non-ASCII or digits
-        if re.search(r'[^\x00-\x7f]', line) or re.search(r'\d', line):
-            filtered.append(line)
-
-    return filtered
+    # Skip lines with alphabets
+    if re.search(r'[a-zA-Z]', line):
+        # But keep if it has digits
+        if re.search(r'\d', line) or re.search(r'^[a-zA-Z]{1,3}$', line):
+            return True
+        
+    # Keep if has non-ASCII or digits
+    if re.search(r'[^\x00-\x7f]', line) or re.search(r'\d', line):
+        return True
+    
+    return False

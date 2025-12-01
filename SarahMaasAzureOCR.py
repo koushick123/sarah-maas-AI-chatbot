@@ -64,6 +64,7 @@ def extract_and_save_text_from_ocr_page(start, end, book_id: str):
     while page_index < end:
         if db.search(ChapterMetaData.page_num == page_index):
             print(f"Page {page_index} found in database, skipping...")
+            page_index += 1
             continue  # Skip pages already in the database
         test_image_path = f"pages_for_OCR/page_{book_id}_{page_index}.jpg"
         try:
@@ -75,5 +76,6 @@ def extract_and_save_text_from_ocr_page(start, end, book_id: str):
                 time.sleep(60)  # Wait for a minute before continuing
                 print(f"Redo OCR processing for {page_index}")
                 continue
-        page_index += 1
+        
         db.insert({'page_num': page_index, 'extracted_text': text[:20]})
+        page_index += 1
