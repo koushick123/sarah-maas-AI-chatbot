@@ -36,10 +36,10 @@ def check_if_chapter_heading(line: str) -> bool:
     if not line or not line.strip():
         line='(empty)'
         return True
-
+    
     # Skip lines with alphabets
     if re.search(r'[a-zA-Z]', line):
-        # But keep if it has digits
+        # But keep if it has digits or has anywhere between 1 to 3 letters only
         if re.search(r'\d', line) or re.search(r'^[a-zA-Z]{1,3}$', line):
             return True
         
