@@ -14,27 +14,26 @@ subscription_key = decrypt_azure_ocr_api()
 credentials = CognitiveServicesCredentials(subscription_key)
 client = ComputerVisionClient(endpoint, credentials)
 
-def ocr_image(image_path) -> str:
+def ocr_image(image_path, page_no) -> str:
 
     # Load image with Pillow
     img = Image.open(image_path)
     w, h = img.size
 
     # Crop top 15% of page — adjust if needed
-    header_height_start = int(h * 0.10)
+    header_height_start = int(h * 0.12)
     header_height_end = int(h * 0.15)
     header_crop = img.crop((0, header_height_start, w, header_height_end))
 
     # Convert cropped image to bytes
     buffer = io.BytesIO()
     header_crop.save(buffer, format="PNG")
-    header_bytes = buffer.getvalue()   
+    header_bytes = buffer.getvalue()
+    header_crop.save(f"cropped_header_{page_no}.png")  # Save cropped header for debugging
 
     # Call API with image
     read_response = client.read_in_stream(io.BytesIO(header_bytes), raw=True)
-    # Call API with image
-    # read_response = client.read_in_stream(image_file, raw=True)
-
+    
     # Get operation ID from response headers
     operation_id = read_response.headers["Operation-Location"].split("/")[-1]
 
@@ -60,13 +59,14 @@ db = TinyDB('map_of_page_nos_chapter_heading.json')
 
 if __name__ == "__main__":
     ChapterMetaData = Query()
-    for page_num in range(21, 550):
+    custom_range = [41, 51]
+    for page_num in custom_range:
         if db.search(ChapterMetaData.page_num == page_num):
             print(f"Page {page_num} found in database, skipping...")
             continue  # Skip pages already in the database
         test_image_path = f"pages_for_OCR/page_empire-of-storms-20251128095023-0d555bf7_{page_num}.jpg"
         try:
-            text = ocr_image(test_image_path)
+            text = ocr_image(test_image_path, page_num)
         except Exception as e:
             print(f"Error processing page {page_num} after wait: {str(e)}")
             if str(e).find("Too Many Requests") != -1:
@@ -77,7 +77,7 @@ if __name__ == "__main__":
                 continue
                     
         db.insert({'page_num': page_num, 'extracted_text': text[:20]})
-        print(f"Extracted Text from page {page_num}:")
+        print(f"Extracted Text {text[:20]} from page {page_num}:")
         print(text)
         print("--------------------------------------------------")
     
