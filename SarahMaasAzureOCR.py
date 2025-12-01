@@ -10,11 +10,13 @@ from Sarah_Maas_Chatbot_Crescent_City import decrypt_azure_ocr_api, decrypt_azur
 endpoint = decrypt_azure_ocr_host()
 subscription_key = decrypt_azure_ocr_api()
 
-
 credentials = CognitiveServicesCredentials(subscription_key)
 client = ComputerVisionClient(endpoint, credentials)
 
-def ocr_image(image_path) -> str:
+from tinydb import TinyDB, Query
+db = TinyDB('map_of_page_nos_chapter_heading.json')
+
+def read_text_from_cropped_ocr_image(image_path) -> str:
 
     # Load image with Pillow
     img = Image.open(image_path)
@@ -55,29 +57,23 @@ def ocr_image(image_path) -> str:
 
     return "\n".join(text)
 
-from tinydb import TinyDB, Query
-db = TinyDB('map_of_page_nos_chapter_heading.json')
 
-if __name__ == "__main__":
+def extract_and_save_text_from_ocr_page(start, end, book_id: str):
     ChapterMetaData = Query()
-    for page_num in range(21, 550):
-        if db.search(ChapterMetaData.page_num == page_num):
-            print(f"Page {page_num} found in database, skipping...")
+    page_index = start
+    while page_index < end:
+        if db.search(ChapterMetaData.page_num == page_index):
+            print(f"Page {page_index} found in database, skipping...")
             continue  # Skip pages already in the database
-        test_image_path = f"pages_for_OCR/page_empire-of-storms-20251128095023-0d555bf7_{page_num}.jpg"
+        test_image_path = f"pages_for_OCR/page_{book_id}_{page_index}.jpg"
         try:
-            text = ocr_image(test_image_path)
+            text = read_text_from_cropped_ocr_image(test_image_path)
         except Exception as e:
-            print(f"Error processing page {page_num} after wait: {str(e)}")
+            print(f"Error processing page {page_index} after wait: {str(e)}")
             if str(e).find("Too Many Requests") != -1:
                 print("API call limit reached for free tier. Wait for a minute...")
                 time.sleep(60)  # Wait for a minute before continuing
-                print(f"Redo OCR processing for {page_num-1}")
-                page_num -= 1
+                print(f"Redo OCR processing for {page_index}")
                 continue
-                    
-        db.insert({'page_num': page_num, 'extracted_text': text[:20]})
-        print(f"Extracted Text from page {page_num}:")
-        print(text)
-        print("--------------------------------------------------")
-    
+        page_index += 1
+        db.insert({'page_num': page_index, 'extracted_text': text[:20]})

@@ -482,6 +482,9 @@ def get_chunk(index: int, book_id: str) -> str:
 
 
 import fitz
+from SarahMaasAzureOCR import extract_and_save_text_from_ocr_page
+from SarahMaasSearchChapterHeadings import filter_chapter_headings
+import time
 
 @app.get("/book/staging/{book_id}/chunks")
 def get_book_chunks(book_id: str, chunk_size: int = 25000):
@@ -563,7 +566,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     pages = []
-                    length_for_test = 530
+                    length_for_test = 45
                     reader_for_full_text = PdfReader(pdf_document)
                     pdf_doc = fitz.open(pdf_document)
                     # Extract text from first chapter page to end and clean it
@@ -594,11 +597,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     if chapters:
                         final_chapters = split_long_chapters(chapters, 8000)
                     else:
-                        final_chapters = []
-                        for page_num in range(first_page_num, int(page_count)):
-                            text = azure_ocr_extract_text(f"pages_for_OCR/page_{book_id}_{page_num}.jpg")
-                            if page_num == (first_page_num + length_for_test) - 1:
-                                break
+                        extract_and_save_text_from_ocr_page(first_page_num, int(page_count), book_id)
 
                 pdf_doc.close()
                     
@@ -626,40 +625,6 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
             "error": str(e),
             "success": False
         }
-
-
-import os
-from azure.ai.vision.imageanalysis import ImageAnalysisClient
-from azure.ai.vision.imageanalysis.models import VisualFeatures
-from azure.core.credentials import AzureKeyCredential
-
-# Your Azure credentials
-endpoint = decrypt_azure_ocr_host()
-subscription_key = decrypt_azure_ocr_api()
-
-def azure_ocr_extract_text(image_path: str) -> str:
-    try:
-        client = ImageAnalysisClient(
-            endpoint=endpoint,
-            credential=AzureKeyCredential(subscription_key)
-        )
-
-        with open(image_path, "rb") as image_stream:
-            analysis = client.analyze(
-                image_data=image_stream.read(),
-                visual_features=[VisualFeatures.READ]
-            )
-
-        extracted_text = []
-        if analysis.read:
-            for line in analysis.read.blocks:
-                for linecontent in line.lines:
-                    extracted_text.append(linecontent.text)
-
-        return extracted_text
-    except Exception as e:
-        print(f"Error during Azure OCR: {str(e)}")
-        return ""
 
 
 def clean_text(page_text):
