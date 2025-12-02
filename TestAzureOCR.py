@@ -21,7 +21,7 @@ def ocr_image(image_path, page_no) -> str:
     w, h = img.size
 
     # Crop top 15% of page — adjust if needed
-    header_height_start = int(h * 0.12)
+    header_height_start = int(h * 0.125)
     header_height_end = int(h * 0.15)
     header_crop = img.crop((0, header_height_start, w, header_height_end))
 
@@ -59,12 +59,12 @@ db = TinyDB('map_of_page_nos_chapter_heading.json')
 
 if __name__ == "__main__":
     ChapterMetaData = Query()
-    custom_range = [41, 51]
+    custom_range = [41, 51,95,72, 410, 21, 302]
     for page_num in custom_range:
         if db.search(ChapterMetaData.page_num == page_num):
             print(f"Page {page_num} found in database, skipping...")
             continue  # Skip pages already in the database
-        test_image_path = f"pages_for_OCR/page_empire-of-storms-20251128095023-0d555bf7_{page_num}.jpg"
+        test_image_path = f"pages_for_OCR/page_empire-of-storms-20251105130926-b633ff79_{page_num}.jpg"
         try:
             text = ocr_image(test_image_path, page_num)
         except Exception as e:
@@ -78,6 +78,5 @@ if __name__ == "__main__":
                     
         db.insert({'page_num': page_num, 'extracted_text': text[:20]})
         print(f"Extracted Text {text[:20]} from page {page_num}:")
-        print(text)
         print("--------------------------------------------------")
     
