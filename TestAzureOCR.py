@@ -64,7 +64,7 @@ if __name__ == "__main__":
         if db.search(ChapterMetaData.page_num == page_num):
             print(f"Page {page_num} found in database, skipping...")
             continue  # Skip pages already in the database
-        test_image_path = f"pages_for_OCR/page_empire-of-storms-20251105130926-b633ff79_{page_num}.jpg"
+        test_image_path = f"pages_for_OCR/empire-of-storms-20251128095023-0d555bf7_{page_num}.jpg"
         try:
             text = ocr_image(test_image_path, page_num)
         except Exception as e:

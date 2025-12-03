@@ -594,8 +594,11 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     else:
                         final_chapters = []
                         full_text = ""
+                        # Extract Text from OCR for all pages and save to DB
                         extract_and_save_text_from_ocr_page(first_page_num, int(page_count), book_id)
-                        filter_chapter_headings_for_chapter_beginning(first_page_num, int(page_count))
+                        # Filter chapter headings and maintain count
+                        map_page_num_chap_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, int(page_count))
+                        print(map_page_num_chap_heading)
 
                 pdf_doc.close()
                     
