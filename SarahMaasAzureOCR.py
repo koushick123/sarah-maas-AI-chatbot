@@ -16,13 +16,13 @@ client = ComputerVisionClient(endpoint, credentials)
 from tinydb import TinyDB, Query
 db = TinyDB('map_of_page_nos_chapter_heading.json')
 
-def read_text_from_cropped_ocr_image(image_path) -> str:
+def read_text_from_cropped_ocr_image(image_path, page_num) -> str:
 
-    start_image_ratio = 0.10
+    start_image_ratio = 0.13
     end_image_ratio = 0.15
     extracted_text = []
     # Iteratively increase the crop ratio until text is found or max ratio is reached
-    while start_image_ratio < end_image_ratio and not extracted_text:
+    while (end_image_ratio - start_image_ratio) <= 0.1 and not extracted_text:
         # Load image with Pillow
         img = Image.open(image_path)
         w, h = img.size
@@ -58,7 +58,7 @@ def read_text_from_cropped_ocr_image(image_path) -> str:
                     for line in page.lines:
                         if line.text.strip():
                             extracted_text.append(line.text)
-                print(f"Extracted text at ratio {start_image_ratio}-{end_image_ratio}: {extracted_text}")
+                print(f"Extracted text at ratio {start_image_ratio}-{end_image_ratio}: {extracted_text} for page number {page_num}")
         except Exception as e:
             if str(e).find("Too Many Requests") != -1:
                 print("Error during OCR image processing: " + str(e))
@@ -67,7 +67,7 @@ def read_text_from_cropped_ocr_image(image_path) -> str:
                 # Repeat the same ratio
                 continue
 
-        start_image_ratio += 0.01
+        start_image_ratio -= 0.01
 
     return "\n".join(extracted_text)
 
@@ -81,6 +81,6 @@ def extract_and_save_text_from_ocr_page(start, end, book_id: str):
             page_index += 1
             continue  # Skip pages already in the database
         test_image_path = f"pages_for_OCR/page_{book_id}_{page_index}.jpg"
-        text = read_text_from_cropped_ocr_image(test_image_path)
+        text = read_text_from_cropped_ocr_image(test_image_path, page_index)
         db.insert({'page_num': page_index, 'extracted_text': text[:20]})
         page_index += 1

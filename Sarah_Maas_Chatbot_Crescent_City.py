@@ -597,8 +597,9 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         # Extract Text from OCR for all pages and save to DB
                         extract_and_save_text_from_ocr_page(first_page_num, int(page_count), book_id)
                         # Filter chapter headings and maintain count
-                        map_page_num_chap_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, int(page_count))
-                        print(map_page_num_chap_heading)
+                        map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, int(page_count))
+                        map_page_num_chapter_heading = {page_no: page_heading for page_no, page_heading in map_page_num_page_heading.items() if page_heading}
+                        print(map_page_num_chapter_heading)
 
                 pdf_doc.close()
                     
