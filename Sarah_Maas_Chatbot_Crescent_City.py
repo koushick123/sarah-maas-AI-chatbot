@@ -565,7 +565,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
 
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
-                    page_num_content_map = {}
+                    map_page_num_content = {}
                     reader_for_full_text = PdfReader(pdf_document)
                     pdf_doc = fitz.open(pdf_document)
                     # Extract text from first chapter page to end and clean it
@@ -573,7 +573,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         page = reader_for_full_text.pages[page_num - 1]
                         page_content = clean_text(page.extract_text())
                         full_text +=  page_content + " "
-                        page_num_content_map[page_num] = page_content
+                        map_page_num_content[page_num] = page_content
 
                         output_path = f"pages_for_OCR/page_{book_id}_{page_num}.jpg"
                         if os.path.exists(output_path):
@@ -599,7 +599,20 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         # Filter chapter headings and maintain count
                         map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, int(page_count))
                         map_page_num_chapter_heading = {page_no: page_heading for page_no, page_heading in map_page_num_page_heading.items() if page_heading}
-                        print(map_page_num_chapter_heading)
+
+                        # Iterate through the page_num from map_page_num_chapter_heading and insert chapter prefix and reprocess
+                        chapter_no = 1
+                        chapter_prefix = "Chapter "
+                        for page_no, heading in map_page_num_chapter_heading.items():
+                            page_text = map_page_num_content[page_no]
+                            page_prefix = chapter_prefix +  str(chapter_no) +"\n\n"
+                            page_text = page_prefix + page_text
+                            print(f"Prefix content = {page_prefix} for page num = {page_no}")
+                            chapter_no += 1
+                            map_page_num_content[page_no] = page_text
+
+                        for page_number , page_cont in map_page_num_content.items():
+                            print(f"Page num = {page_number} content = {page_cont[:20]}\n")
 
                 pdf_doc.close()
                     

@@ -82,5 +82,5 @@ def extract_and_save_text_from_ocr_page(start, end, book_id: str):
             continue  # Skip pages already in the database
         test_image_path = f"pages_for_OCR/page_{book_id}_{page_index}.jpg"
         text = read_text_from_cropped_ocr_image(test_image_path, page_index)
-        db.insert({'page_num': page_index, 'extracted_text': text[:20]})
+        db.insert({'page_num': page_index, 'extracted_text': text[:10]})
         page_index += 1
