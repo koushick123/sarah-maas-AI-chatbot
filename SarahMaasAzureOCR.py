@@ -19,7 +19,7 @@ db = TinyDB('map_of_page_nos_chapter_heading.json')
 def read_text_from_cropped_ocr_image(image_path, page_num) -> str:
 
     start_image_ratio = 0.13
-    end_image_ratio = 0.15
+    end_image_ratio = 0.19
     extracted_text = []
     # Iteratively increase the crop ratio until text is found or max ratio is reached
     while (end_image_ratio - start_image_ratio) <= 0.1 and not extracted_text:
@@ -69,7 +69,7 @@ def read_text_from_cropped_ocr_image(image_path, page_num) -> str:
 
         start_image_ratio -= 0.01
 
-    return "\n".join(extracted_text)
+    return "".join(extracted_text)
 
 
 def extract_and_save_text_from_ocr_page(start, end, book_id: str):
