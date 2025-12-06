@@ -557,7 +557,8 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         "page_count": page_count,
                         "page_for_first_chapter": first_page_num,
                         "total_chunks": 0,
-                        "total_characters": 0
+                        "total_characters": 0,
+                        "error": "No chapter or part found"
                     }
 
                 print(f"First chapter starts on page: {first_page_num}")
@@ -566,25 +567,16 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 with open(temp_pdf_path, "rb") as pdf_document:
                     full_text = ""
                     map_page_num_content = {}
+                    error_msg = ""
                     reader_for_full_text = PdfReader(pdf_document)
+                    page_list = reader_for_full_text.pages
                     pdf_doc = fitz.open(pdf_document)
                     # Extract text from first chapter page to end and clean it
                     for page_num in range(first_page_num, int(page_count)):
-                        page = reader_for_full_text.pages[page_num - 1]
+                        page = page_list[page_num - 1]
                         page_content = clean_text(page.extract_text())
                         full_text +=  page_content + " "
-                        map_page_num_content[page_num] = page_content
-
-                        output_path = f"pages_for_OCR/page_{book_id}_{page_num}.jpg"
-                        if os.path.exists(output_path):
-                            continue
-                        else:
-                            # Convert to image
-                            fitz_page = pdf_doc[page_num - 1]
-                            pix = fitz_page.get_pixmap(dpi=300)
-                            pix.save(output_path)
-                            print(f"✓ Created: {output_path}")
-                            print("Written page for OCR analysis:", output_path)                       
+                        map_page_num_content[page_num] = page_content                                        
 
                     # Split text into chapters by looking for "Chapter" headings
                     chapters = split_into_chapters(full_text)
@@ -594,25 +586,54 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     else:
                         final_chapters = []
                         full_text = ""
+                        print("Extract text using OCR since pages could have headings in image format")
+                        for page_num in map_page_num_content:
+                            page = map_page_num_content[page_num - 1]
+                            page_content = clean_text(page.extract_text())
+                            full_text +=  page_content + " "
+                            output_path = f"pages_for_OCR/page_{book_id}_{page_num}.jpg"
+                            if os.path.exists(output_path):
+                                continue
+                            else:
+                                # Convert to image
+                                fitz_page = pdf_doc[page_num - 1]
+                                pix = fitz_page.get_pixmap(dpi=300)
+                                pix.save(output_path)
+                                print(f"✓ Created: {output_path}")
+                                print("Written page for OCR analysis:", output_path)
+                        
                         # Extract Text from OCR for all pages and save to DB
                         extract_and_save_text_from_ocr_page(first_page_num, int(page_count), book_id)
                         # Filter chapter headings and maintain count
                         map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, int(page_count))
-                        map_page_num_chapter_heading = {page_no: page_heading for page_no, page_heading in map_page_num_page_heading.items() if page_heading}
+                        if map_page_num_page_heading:
+                            map_page_num_chapter_heading = {page_no: page_heading for page_no, page_heading in map_page_num_page_heading.items() if page_heading}
 
-                        # Iterate through the page_num from map_page_num_chapter_heading and insert chapter prefix and reprocess
-                        chapter_no = 1
-                        chapter_prefix = "Chapter "
-                        for page_no, heading in map_page_num_chapter_heading.items():
-                            page_text = map_page_num_content[page_no]
-                            page_prefix = chapter_prefix +  str(chapter_no) +"\n\n"
-                            page_text = page_prefix + page_text
-                            print(f"Prefix content = {page_prefix} for page num = {page_no}")
-                            chapter_no += 1
-                            map_page_num_content[page_no] = page_text
-
-                        for page_number , page_cont in map_page_num_content.items():
-                            print(f"Page num = {page_number} content = {page_cont[:20]}\n")
+                            if map_page_num_chapter_heading:
+                                # Iterate through the page_num from map_page_num_chapter_heading and insert chapter prefix and reprocess
+                                chapter_no = 1
+                                chapter_prefix = "Chapter "
+                                for page_no in map_page_num_chapter_heading:
+                                    page_text = map_page_num_content[page_no]
+                                    page_prefix = chapter_prefix +  str(chapter_no) +"\n\n"
+                                    page_text = page_prefix + page_text
+                                    chapter_no += 1
+                                    page_text = clean_text(page_text)
+                                    full_text += page_text + " "
+                                
+                                # Reprocess using same logic to split by occurence of 'Chapter' 
+                                # Split text into chapters by looking for "Chapter" headings
+                                chapters = split_into_chapters(full_text)
+                                print(f"Total chapters extracted: {len(chapters)}")
+                                # NOT including else part since above logic will ensure 'Chapter' is included as prefix for all Chapter headings.
+                                if chapters:
+                                    final_chapters = split_long_chapters(chapters, 8000)
+                            else:
+                                error_msg = "Chapter headings are blank. Unable to proceed."
+                                print(error_msg)
+                        else:
+                            error_msg = "Unable to extract text using OCR."
+                            print(error_msg)
 
                 pdf_doc.close()
                     
@@ -625,10 +646,15 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     "total_characters": len(full_text)
                 }
 
-                # collection_book_chunk_metadata.insert_one(book_metadata)
+                # if not error_msg:
+                #     collection_book_chunk_metadata.insert_one(book_metadata)
+                # else:
+                #     book_metadata["error"] = error_msg
+
                 for key, value in book_metadata.items():
                     if isinstance(value, ObjectId):
                         book_metadata[key] = str(value)
+
                 return book_metadata
             finally:
                 # Clean up temporary file
