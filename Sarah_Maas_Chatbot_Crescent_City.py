@@ -587,7 +587,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         full_text = ""
                         print("Extract text using OCR since pages could have headings in image format")
                         count = 0
-                        size = 250
+                        size = 5
                         for page_num in map_page_num_content:
                             print(f"Page num = {page_num}")
                             page = map_page_num_content[page_num]
@@ -894,11 +894,11 @@ async def upload_book_pdf(
         try:
             # Send initial status
             yield f"data: {json.dumps({'status': 'started', 'message': 'Starting upload process'})}\n\n"
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
 
             # File already read
             yield f"data: {json.dumps({'status': 'reading', 'message': 'File content loaded', 'file_size': len(file_content)})}\n\n"
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
 
             # Generate unique book_id
             yield f"data: {json.dumps({'status': 'processing', 'message': 'Generating book ID'})}\n\n"
@@ -907,7 +907,7 @@ async def upload_book_pdf(
             book_id = f"{book_name.lower().replace(' ', '-')}-{timestamp}-{unique_id}"
 
             print("Generated Book ID:", book_id)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
 
             # Store PDF in GridFS
             yield f"data: {json.dumps({'status': 'uploading', 'message': 'Storing PDF in GridFS', 'book_id': book_id})}\n\n"
@@ -918,7 +918,7 @@ async def upload_book_pdf(
                 content_type="application/pdf"
             )
             print("Stored file in GridFS with ID:", file_id)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
 
             # Create staging document
             yield f"data: {json.dumps({'status': 'saving', 'message': 'Creating staging record'})}\n\n"
@@ -931,7 +931,7 @@ async def upload_book_pdf(
             }
 
             result = collection_book_staging.insert_one(document)
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
 
             # Send success response
             yield f"data: {json.dumps({'status': 'completed', 'message': 'PDF uploaded successfully', 'book_id': book_id, 'file_id': str(file_id), 'mongo_id': str(result.inserted_id), 'file_size': len(file_content)})}\n\n"
@@ -999,3 +999,38 @@ def download_book_pdf(book_id: str):
         )
     except Exception as e:
         return {"error": str(e)}
+
+# FOR TESTING ONLY: Simple SSE endpoint that streams events every 2 seconds
+from fastapi.responses import StreamingResponse
+import time
+
+async def generate_events():
+    """Generator function that yields SSE formatted events"""
+    count = 0
+    while True:
+        # Create event data
+        data = {
+            'message': f'Event number {count}',
+            'timestamp': time.time(),
+            'count': count
+        }
+
+        # Format as SSE event
+        yield f"data: {json.dumps(data)}\n\n"
+
+        count += 1
+        await asyncio.sleep(2)
+
+
+@app.get('/events')
+async def events():
+    """SSE endpoint that streams events to clients"""
+    return StreamingResponse(
+        generate_events(),
+        media_type='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive'
+        }
+    )
