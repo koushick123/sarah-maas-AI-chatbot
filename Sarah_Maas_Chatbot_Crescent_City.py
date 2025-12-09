@@ -487,7 +487,19 @@ from SarahMaasSearchChapterHeadings import filter_chapter_headings_for_chapter_b
 import shutil
 
 @app.get("/book/staging/{book_id}/chunks")
-def get_book_chunks(book_id: str, chunk_size: int = 25000):
+async def get_book_chunks(book_id: str, chunk_size: int = 25000):
+    return StreamingResponse(
+        generate_book_chunks_events(book_id, chunk_size),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@app.get("/book/staging/{book_id}/chunks")
+async def generate_book_chunks_events(book_id: str, chunk_size: int = 25000):
     """
     Download PDF and return chunked text for analysis.
     This tool fetches a book PDF, extracts text, and chunks it for processing.
@@ -503,6 +515,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
     try:
         print(f"🔧 TOOL CALLED: get_book_chunks with book_id={book_id}")
         print(f"Check if book chunks already exist for this book_id : {book_id}")
+        yield f"data: Checking existing chunks for book_id: {book_id}\n\n"
 
         # Check if chunks already exist as well.
         chunks_doc = collection_book_chunks.find_one({"book_id": book_id})
@@ -512,7 +525,8 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
             for key, value in chunks_doc.items():
                 if isinstance(value, ObjectId):
                     chunks_doc[key] = str(value)
-            return chunks_doc
+            yield f"data: {json.dumps({'message': 'Chunks already exist for book id', 'book_id': book_id, 'chunks_doc': chunks_doc})}\n\n"
+            return
         else:
             print("Chunks do not exist, preparing the chunks for the book.")
             # Retrieve PDF from GridFS
@@ -551,7 +565,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                 if first_page_num == -1:
                     # No chapter or part found, return metadata with zero chunks
                     # UI to handle the logic to say no analysis possible since Part or Chapter not found
-                    return {
+                    error_data = {
                         "file_id": book_id,
                         "file_name": f"{book_id}.pdf",
                         "page_count": page_count,
@@ -560,6 +574,8 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         "total_characters": 0,
                         "error": "No chapter or part found"
                     }
+                    yield f"data: {json.dumps(error_data)}\n\n"
+                    return
 
                 print(f"First chapter starts on page: {first_page_num}")
                 print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
@@ -575,19 +591,23 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                         page = page_list[page_num - 1]
                         page_content = clean_text(page.extract_text())
                         full_text +=  page_content + " "
-                        map_page_num_content[page_num] = page_content                                        
+                        map_page_num_content[page_num] = page_content
+                        yield f"data: Extracted text from page {page_num}\n\n"
 
                     # Split text into chapters by looking for "Chapter" headings
                     chapters = split_into_chapters(full_text)
                     print(f"Total chapters extracted: {len(chapters)}")
                     if chapters:
+                        yield f"data: Splitting text into chapters based on headings\n\n"
                         final_chapters = split_long_chapters(chapters, 8000)
+                        yield f"data: Split book into {len(final_chapters)} chapters based on headings\n\n"
                     else:
                         final_chapters = []
                         full_text = ""
+                        yield f"data: No chapters found using direct text extraction. Proceeding with OCR extraction.\n\n"
                         print("Extract text using OCR since pages could have headings in image format")
                         count = 0
-                        size = 5
+                        size = 1
                         for page_num in map_page_num_content:
                             print(f"Page num = {page_num}")
                             page = map_page_num_content[page_num]
@@ -607,12 +627,14 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                                 pix.save(output_path)
                                 print(f"✓ Created: {output_path}")
                                 print("Written page for OCR analysis:", output_path)
+                                yield "data: Written page for OCR analysis: {output_path}\n\n"
                             count += 1
                             if count >= size:
                                 break
 
                         # Extract Text from OCR for all pages and save to DB
                         extract_and_save_text_from_ocr_page(first_page_num, first_page_num+size, book_id)
+                        yield f"data: Extracted text using OCR for pages {first_page_num} to {first_page_num+size}\n\n"
                         # Filter chapter headings and maintain count
                         map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, first_page_num+size)
                         if map_page_num_page_heading:
@@ -622,6 +644,7 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                                 # Iterate through the page_num from map_page_num_chapter_heading and insert chapter prefix and reprocess
                                 chapter_no = 1
                                 chapter_prefix = "Chapter "
+                                yield f"data: Being reprocessing text with chapter headings from OCR results\n\n"
                                 for page_no in map_page_num_chapter_heading:
                                     page_text = map_page_num_content[page_no]
                                     page_prefix = chapter_prefix +  str(chapter_no) +"\n\n"
@@ -635,11 +658,13 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                                 chapters = split_into_chapters(full_text)
                                 print(f"Total chapters extracted: {len(chapters)}")
                                 final_chapters = split_long_chapters(chapters, 8000)
+                                yield f"data: Split book into {len(final_chapters)} chapters based on headings\n\n"
                                 #Clean up
                                 print("Start clean up")
                                 shutil.rmtree("pages_for_OCR")
                                 os.remove("map_of_page_nos_chapter_heading.json")
                                 print("Clean up completed")
+                                yield f"data: Clean up of temporary OCR files completed\n\n"
                             else:
                                 error_msg = "Chapter headings are blank. Unable to proceed."
                                 print(error_msg)
@@ -655,7 +680,8 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     "page_count": page_count,
                     "page_for_first_chapter": first_page_num,
                     "total_chunks": len(final_chapters),
-                    "total_characters": len(full_text)
+                    "total_characters": len(full_text),
+                    "success": True
                 }
 
                 # if not error_msg:
@@ -666,17 +692,20 @@ def get_book_chunks(book_id: str, chunk_size: int = 25000):
                     if isinstance(value, ObjectId):
                         book_metadata[key] = str(value)
 
-                return book_metadata
+                yield f"data: {json.dumps(book_metadata)}\n\n"
+                return
             finally:
                 # Clean up temporary file
                 if os.path.exists(temp_pdf_path):
                     os.unlink(temp_pdf_path)
     except Exception as e:
         print(f"❌ Error in get_book_chunks tool: {str(e)}")
-        return {
+        error_data = {
             "error": str(e),
             "success": False
         }
+        yield f"data: {json.dumps(error_data)}\n\n"
+        return
 
 
 def clean_text(page_text):
@@ -831,22 +860,44 @@ async def book_analysis(book_id: str):
     Returns:
         StreamingResponse with SSE formatted data
     """
-    number_of_chunks:int = 0
-    book_doc = collection_book_chunk_metadata.find_one({"file_id": book_id})
-    if book_doc:
-        number_of_chunks = book_doc["total_chunks"]
-    else:
-        print("Book metadata not found for book_id: ", book_id)
-        print("Check for staging record for the book_id: ", book_id)
-        staging_doc = collection_book_staging.find_one({"book_id": book_id})
-        if staging_doc:
-            print("Staging record found, now start chunking...")
-            book_doc = get_book_chunks(book_id=book_id, chunk_size=25000)
-            number_of_chunks = book_doc["total_chunks"]
-        else:
-            return {"error": f"Book staging record not found for {book_id}."}
+    async def book_analyzer_events():
+        yield f"data: Starting analysis for book_id: {book_id}\n\n"
+        await asyncio.sleep(1)
 
-    print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
+        # Check if chunk metadata exists
+        yield f"data: Checking chunk metadata for book_id: {book_id}\n\n"
+        await asyncio.sleep(1)
+
+         # Check if chunk metadata exists
+        book_doc = collection_book_chunk_metadata.find_one({"file_id": book_id})
+        if book_doc:
+            number_of_chunks = book_doc["total_chunks"]
+            yield f"data: Chunk metadata found. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
+        else:
+            yield f"data: Chunk metadata not found for book_id: {book_id}. Checking staging record...\n\n"
+            print("Book metadata not found for book_id: ", book_id)
+            print("Check for staging record for the book_id: ", book_id)
+            staging_doc = collection_book_staging.find_one({"book_id": book_id})
+            if staging_doc:
+                print("Staging record found, now start chunking...")
+                yield f"data: Staging record found. Starting chunking process for book_id: {book_id}\n\n"
+                book_doc = get_book_chunks(book_id=book_id, chunk_size=25000)
+                number_of_chunks = book_doc["total_chunks"]
+                yield f"data: Chunking completed. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
+            else:
+                number_of_chunks = 0
+                print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
+                yield f"data: No staging record found for book_id: {book_id}. Cannot proceed with analysis.\n\n"
+
+    return StreamingResponse(
+        book_analyzer_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 @app.delete("/book/staging/{book_id}/chunks/delete")
