@@ -2,20 +2,18 @@
 import asyncio
 import json
 import os
-import tempfile
 import urllib.parse
 import urllib.parse
 import uuid
 from datetime import datetime
+from typing import Any
 
 import requests
-from bson import ObjectId
 from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from fastapi import Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from fastapi.responses import StreamingResponse
 from gridfs import GridFS
 from langchain.chains import LLMChain
 from langchain.chains.summarize import load_summarize_chain
@@ -403,309 +401,280 @@ def generate_chapter_summary(chapter_to_summarize: Chapter):
         return {"error": "Selected book is not available."}
 
 
-def chunk_text(text: str, chunk_size: int = 8000, overlap: int = 100, book_id: str = "") -> int:
-    """
-    Split text into chunks of specified size with overlap to preserve context and store in MongoDB.
-
-    Args:
-        text: The full text to chunk
-        chunk_size: Maximum characters per chunk
-        overlap: Number of characters to overlap between chunks for context
-        book_id: The unique identifier of the book
-
-    Returns:
-        Count of text chunks
-    """
-    if len(text) <= chunk_size:
-        # Store single chunk in MongoDB if not exists
-        if not collection_book_chunks.find_one({"index": 0}):
-            collection_book_chunks.insert_one({
-                "index": 0,
-                "book_id": book_id,
-                "chunk": text,
-                "chapter": 1
-            })
-        return 1
-
-    start = 0
-    chunk_index = 0
-
-    while start < len(text):
-        end = start + chunk_size
-
-        # If this is not the last chunk, try to break at a paragraph or sentence
-        if end < len(text):
-            # Look for paragraph break
-            paragraph_break = text.rfind('\n\n', start, end)
-            if paragraph_break != -1 and paragraph_break > start + chunk_size // 2:
-                end = paragraph_break
-            else:
-                # Look for sentence break
-                sentence_break = text.rfind('. ', start, end)
-                if sentence_break != -1 and sentence_break > start + chunk_size // 2:
-                    end = sentence_break + 1
-
-        chunk_text_value = text[start:end]
-        print("Appending chunk:", start, "to", end," with size ", len(chunk_text_value))
-        
-        # Store chunk in MongoDB if not exists
-        index_cond = {"index": chunk_index}
-        book_cond = {"book_id": book_id}
-        if not collection_book_chunks.find_one({"$and": [index_cond, book_cond]}):
-            print("Inserting chunk index:", chunk_index)
-            if  chunk_text_value.lower().find("acknowledgements") != -1:
-                print("Acknowledgements found, stopping further chunking.")
-                return chunk_index
-            collection_book_chunks.insert_one({
-                "index": chunk_index,
-                "book_id": book_id,
-                "chunk": chunk_text_value
-            })
-        
-        chunk_index += 1
-
-        if end < len(text):
-            start = end - overlap
-        else:
-            start = end
-
-    return chunk_index - 1
-
-def get_chunk(index: int, book_id: str) -> str:
-    index_cond = {"index": index}
-    book_cond = {"book_id": book_id}
-    book_chunk = collection_book_chunks.find_one({"$and": [index_cond, book_cond]})
-    if not book_chunk:
-        return f"No Chunk found for index {index} and book_id {book_id}"
-
-    return book_chunk["chunk"]
-
-
-import fitz
 from SarahMaasAzureOCR import extract_and_save_text_from_ocr_page
 from SarahMaasSearchChapterHeadings import filter_chapter_headings_for_chapter_beginning
+import os
+import tempfile
 import shutil
+from PyPDF2 import PdfReader
+import fitz
+from bson import ObjectId
 
-@app.get("/book/staging/{book_id}/chunks")
-async def get_book_chunks(book_id: str, chunk_size: int = 25000):
-    return StreamingResponse(
-        generate_book_chunks_events(book_id, chunk_size),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
+
+def check_existing_chunks(book_id: str):
+    """Check if chunks already exist for the book."""
+    chunks_doc = collection_book_chunks.find_one({"book_id": book_id})
+    if chunks_doc:
+        print(f"Book chunks already exist for book_id: {book_id}")
+        # Convert ObjectId fields to strings
+        for key, value in chunks_doc.items():
+            if isinstance(value, ObjectId):
+                chunks_doc[key] = str(value)
+        return chunks_doc
+    return None
+
+
+def fetch_pdf_from_gridfs(book_id: str):
+    """Retrieve PDF binary from GridFS."""
+    file_id = ObjectId(collection_book_staging.find_one({"book_id": book_id})["file_id"])
+    pdf_file = fs.get(file_id)
+    pdf_binary = pdf_file.read()
+    print(f"📄 PDF fetched, size: {len(pdf_binary)} bytes")
+    return pdf_binary
+
+
+def create_temp_pdf(pdf_binary: bytes):
+    """Create a temporary PDF file from binary data."""
+    temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
+    temp_pdf.write(pdf_binary)
+    temp_pdf.close()
+    return temp_pdf.name
+
+
+def find_first_chapter_page(pdf_path: str):
+    """Find the page number where the first chapter begins."""
+    with open(pdf_path, "rb") as pdf_document:
+        reader = PdfReader(pdf_document)
+        page_count = len(reader.pages)
+        print("Extract text from PDF to find first chapter...")
+
+        for page_num in range(page_count):
+            page = reader.pages[page_num]
+            print(f"Page number: {page_num + 1}")
+            page_text = page.extract_text() or ""
+            print(f"Page Text ====== {page_text[:50]}")
+
+            if does_part_or_chapter_exist_only_once(page_text) and find_first_chapter_or_part(page_text.strip()):
+                return page_num + 1, page_count
+
+        return -1, page_count
+
+
+def extract_text_from_pages(pdf_path: str, first_page_num: int, page_count: int):
+    """Extract and clean text from specified page range."""
+    with open(pdf_path, "rb") as pdf_document:
+        full_text = ""
+        map_page_num_content = {}
+        reader = PdfReader(pdf_document)
+        page_list = reader.pages
+
+        for page_num in range(first_page_num, page_count):
+            page = page_list[page_num - 1]
+            page_content = clean_text(page.extract_text())
+            full_text += page_content + " "
+            map_page_num_content[page_num] = page_content
+
+        return full_text, map_page_num_content
+
+
+def process_chapters_from_text(full_text: str):
+    """Split text into chapters and handle long chapters."""
+    chapters = split_into_chapters(full_text)
+    print(f"Total chapters extracted: {len(chapters)}")
+
+    if chapters:
+        return split_long_chapters(chapters, 8000)
+    return []
+
+
+def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pages: int = 1):
+    """Convert PDF pages to images for OCR processing."""
+    pdf_doc = fitz.open(pdf_path)
+    os.makedirs("pages_for_OCR", exist_ok=True)
+
+    count = 0
+    for page_num in page_nums:
+        if count >= max_pages:
+            break
+
+        output_path = f"pages_for_OCR/page_{book_id}_{page_num}.jpg"
+
+        if os.path.exists(output_path):
+            count += 1
+            continue
+
+        # Convert to image
+        fitz_page = pdf_doc[page_num - 1]
+        pix = fitz_page.get_pixmap(dpi=300)
+        pix.save(output_path)
+        print(f"✓ Created: {output_path}")
+        count += 1
+
+    pdf_doc.close()
+    return count
+
+
+def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map_page_num_content: dict,
+                     ocr_page_count: int = 1) -> tuple:
+    """Process pages using OCR when regular text extraction fails."""
+    full_text = ""
+
+    # Convert pages to images
+    page_nums = list(map_page_num_content.keys())[:ocr_page_count]
+    convert_pages_to_images(pdf_path, book_id, page_nums, ocr_page_count)
+
+    # Extract text from OCR
+    extract_and_save_text_from_ocr_page(first_page_num, first_page_num + ocr_page_count, book_id)
+
+    # Filter chapter headings
+    map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(
+        first_page_num, first_page_num + ocr_page_count
     )
 
-@app.get("/book/staging/{book_id}/chunks")
-async def generate_book_chunks_events(book_id: str, chunk_size: int = 25000):
+    if not map_page_num_page_heading:
+        print("Unable to extract text using OCR.")
+        return None, "Unable to extract text using OCR."
+
+    # Get non-blank chapter headings
+    map_page_num_chapter_heading = {
+        page_no: page_heading
+        for page_no, page_heading in map_page_num_page_heading.items()
+        if page_heading
+    }
+
+    if not map_page_num_chapter_heading:
+        print("Chapter headings are blank. Unable to proceed.")
+        return None, "Chapter headings are blank. Unable to proceed."
+
+    # Add chapter prefixes
+    chapter_no = 1
+    for page_no in map_page_num_chapter_heading:
+        page_text = map_page_num_content[page_no]
+        page_prefix = f"Chapter {chapter_no}\n\n"
+        page_text = page_prefix + page_text
+        chapter_no += 1
+        page_text = clean_text(page_text)
+        full_text += page_text + " "
+
+    # Reprocess to split by chapters
+    chapters = split_into_chapters(full_text)
+    print(f"Total chapters extracted after OCR: {len(chapters)}")
+    final_chapters = split_long_chapters(chapters, 8000)
+
+    # Clean up
+    cleanup_ocr_files()
+
+    return final_chapters, None
+
+
+def cleanup_ocr_files():
+    """Clean up temporary OCR files."""
+    try:
+        if os.path.exists("pages_for_OCR"):
+            shutil.rmtree("pages_for_OCR")
+        if os.path.exists("map_of_page_nos_chapter_heading.json"):
+            os.remove("map_of_page_nos_chapter_heading.json")
+        print("Clean up completed")
+    except Exception as e:
+        print(f"Error during cleanup: {e}")
+
+
+def create_book_metadata(book_id: str, page_count: int, first_page_num: int,
+                         final_chapters: list, full_text: str, error_msg: str = None):
+    """Create metadata dictionary for the book."""
+    metadata = {
+        "file_id": book_id,
+        "file_name": f"{book_id}.pdf",
+        "page_count": page_count,
+        "page_for_first_chapter": first_page_num,
+        "total_chunks": len(final_chapters) if final_chapters else 0,
+        "total_characters": len(full_text) if full_text else 0,
+        "success": error_msg is None
+    }
+
+    if error_msg:
+        metadata["error"] = error_msg
+
+    # Convert ObjectId to strings
+    for key, value in metadata.items():
+        if isinstance(value, ObjectId):
+            metadata[key] = str(value)
+
+    return metadata
+
+
+def generate_book_chunks_events(book_id: str, chunk_size: int = 25000) -> dict:
     """
     Download PDF and return chunked text for analysis.
-    This tool fetches a book PDF, extracts text, and chunks it for processing.
-
-    Args:
-        book_id: The unique identifier of the book to download
-        chunk_size: Maximum characters per chunk
-
-    Returns:
-        Dictionary with chunks, metadata, and chunk info
+    Main orchestration function that uses all helper functions.
     """
+    temp_pdf_path = None
 
     try:
         print(f"🔧 TOOL CALLED: get_book_chunks with book_id={book_id}")
-        print(f"Check if book chunks already exist for this book_id : {book_id}")
-        yield f"data: Checking existing chunks for book_id: {book_id}\n\n"
 
-        # Check if chunks already exist as well.
-        chunks_doc = collection_book_chunks.find_one({"book_id": book_id})
-        if chunks_doc:
-            print(f"Book chunks already exist for book_id: {book_id}, returning existing metadata.")
-            # Convert ObjectId fields to strings
-            for key, value in chunks_doc.items():
-                if isinstance(value, ObjectId):
-                    chunks_doc[key] = str(value)
-            yield f"data: {json.dumps({'message': 'Chunks already exist for book id', 'book_id': book_id, 'chunks_doc': chunks_doc})}\n\n"
-            return
-        else:
-            print("Chunks do not exist, preparing the chunks for the book.")
-            # Retrieve PDF from GridFS
-            file_id = ObjectId(collection_book_staging.find_one({"book_id": book_id})["file_id"])
-            pdf_file = fs.get(file_id)
-            pdf_binary = pdf_file.read()
+        # Step 1: Check if chunks already exist
+        existing_chunks = check_existing_chunks(book_id)
+        if existing_chunks:
+            return existing_chunks
 
-            print(f"📄 PDF fetched, size: {len(pdf_binary)} bytes")
+        print("Chunks do not exist, preparing the chunks for the book.")
 
-            # Create a temporary file to write the PDF binary
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_pdf:
-                temp_pdf.write(pdf_binary)
-                temp_pdf_path = temp_pdf.name
+        # Step 2: Fetch PDF from GridFS
+        pdf_binary = fetch_pdf_from_gridfs(book_id)
 
-            try:
-                from PyPDF2 import PdfReader
-            except Exception as e:
-                raise RuntimeError("PyPDF2 is required to extract PDF text: " + str(e))
+        # Step 3: Create temporary PDF file
+        temp_pdf_path = create_temp_pdf(pdf_binary)
 
-            try:
-                # Open PDF using file path with PyPDF2
-                first_page_num = -1
-                with open(temp_pdf_path, "rb") as pdf_document:
-                    reader = PdfReader(pdf_document)
-                    page_count = len(reader.pages)
-                    print("Extract text from PDF...")
-                    for page_num in range(int(page_count)):
-                        page = reader.pages[page_num]
-                        print(f"Page number: {page_num + 1}")
-                        page_text = page.extract_text() or ""
-                        print(f"Page Text ====== {page_text[:50]}")
-                        if does_part_or_chapter_exist_only_once(page_text) and find_first_chapter_or_part(page_text.strip()):
-                            first_page_num = page_num + 1
-                            break
+        # Step 4: Find first chapter page
+        first_page_num, page_count = find_first_chapter_page(temp_pdf_path)
 
-                if first_page_num == -1:
-                    # No chapter or part found, return metadata with zero chunks
-                    # UI to handle the logic to say no analysis possible since Part or Chapter not found
-                    error_data = {
-                        "file_id": book_id,
-                        "file_name": f"{book_id}.pdf",
-                        "page_count": page_count,
-                        "page_for_first_chapter": first_page_num,
-                        "total_chunks": 0,
-                        "total_characters": 0,
-                        "error": "No chapter or part found"
-                    }
-                    yield f"data: {json.dumps(error_data)}\n\n"
-                    return
+        if first_page_num == -1:
+            return create_book_metadata(
+                book_id, page_count, first_page_num, [], "",
+                "No chapter or part found"
+            )
 
-                print(f"First chapter starts on page: {first_page_num}")
-                print(f"📖 Extracting text from {first_page_num} page till {int(page_count)}...")
+        print(f"First chapter starts on page: {first_page_num}")
+        print(f"📖 Extracting text from page {first_page_num} to {page_count}...")
 
-                with open(temp_pdf_path, "rb") as pdf_document:
-                    full_text = ""
-                    map_page_num_content = {}
-                    reader_for_full_text = PdfReader(pdf_document)
-                    page_list = reader_for_full_text.pages
-                    pdf_doc = fitz.open(pdf_document)
-                    # Extract text from first chapter page to end and clean it
-                    for page_num in range(first_page_num, int(page_count)):
-                        page = page_list[page_num - 1]
-                        page_content = clean_text(page.extract_text())
-                        full_text +=  page_content + " "
-                        map_page_num_content[page_num] = page_content
-                        yield f"data: Extracted text from page {page_num}\n\n"
+        # Step 5: Extract text from pages
+        full_text, map_page_num_content = extract_text_from_pages(
+            temp_pdf_path, first_page_num, page_count
+        )
 
-                    # Split text into chapters by looking for "Chapter" headings
-                    chapters = split_into_chapters(full_text)
-                    print(f"Total chapters extracted: {len(chapters)}")
-                    if chapters:
-                        yield f"data: Splitting text into chapters based on headings\n\n"
-                        final_chapters = split_long_chapters(chapters, 8000)
-                        yield f"data: Split book into {len(final_chapters)} chapters based on headings\n\n"
-                    else:
-                        final_chapters = []
-                        full_text = ""
-                        yield f"data: No chapters found using direct text extraction. Proceeding with OCR extraction.\n\n"
-                        print("Extract text using OCR since pages could have headings in image format")
-                        count = 0
-                        size = 1
-                        for page_num in map_page_num_content:
-                            print(f"Page num = {page_num}")
-                            page = map_page_num_content[page_num]
-                            page_content = clean_text(clean_text(page))
-                            full_text +=  page_content + " "
-                            output_path = f"pages_for_OCR/page_{book_id}_{page_num}.jpg"
-                            if os.path.exists(output_path):
-                                if count >= size:
-                                    break
-                                count += 1
-                                continue
-                            else:
-                                os.makedirs("pages_for_OCR", exist_ok=True)
-                                # Convert to image
-                                fitz_page = pdf_doc[page_num - 1]
-                                pix = fitz_page.get_pixmap(dpi=300)
-                                pix.save(output_path)
-                                print(f"✓ Created: {output_path}")
-                                print("Written page for OCR analysis:", output_path)
-                                yield "data: Written page for OCR analysis: {output_path}\n\n"
-                            count += 1
-                            if count >= size:
-                                break
+        # Step 6: Process chapters
+        final_chapters = process_chapters_from_text(full_text)
+        error_msg = None
 
-                        # Extract Text from OCR for all pages and save to DB
-                        extract_and_save_text_from_ocr_page(first_page_num, first_page_num+size, book_id)
-                        yield f"data: Extracted text using OCR for pages {first_page_num} to {first_page_num+size}\n\n"
-                        # Filter chapter headings and maintain count
-                        map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, first_page_num+size)
-                        if map_page_num_page_heading:
-                            map_page_num_chapter_heading = {page_no: page_heading for page_no, page_heading in map_page_num_page_heading.items() if page_heading}
+        # Step 7: If no chapters found, try OCR
+        if not final_chapters:
+            print("No chapters found. Attempting OCR processing...")
+            final_chapters, error_msg = process_with_ocr(
+                temp_pdf_path, book_id, first_page_num, map_page_num_content, ocr_page_count=1
+            )
 
-                            if map_page_num_chapter_heading:
-                                # Iterate through the page_num from map_page_num_chapter_heading and insert chapter prefix and reprocess
-                                chapter_no = 1
-                                chapter_prefix = "Chapter "
-                                yield f"data: Being reprocessing text with chapter headings from OCR results\n\n"
-                                for page_no in map_page_num_chapter_heading:
-                                    page_text = map_page_num_content[page_no]
-                                    page_prefix = chapter_prefix +  str(chapter_no) +"\n\n"
-                                    page_text = page_prefix + page_text
-                                    chapter_no += 1
-                                    page_text = clean_text(page_text)
-                                    full_text += page_text + " "
-                                
-                                # Reprocess using same logic to split by occurrence of 'Chapter'
-                                # Split text into chapters by looking for "Chapter" headings
-                                chapters = split_into_chapters(full_text)
-                                print(f"Total chapters extracted: {len(chapters)}")
-                                final_chapters = split_long_chapters(chapters, 8000)
-                                yield f"data: Split book into {len(final_chapters)} chapters based on headings\n\n"
-                                #Clean up
-                                print("Start clean up")
-                                shutil.rmtree("pages_for_OCR")
-                                os.remove("map_of_page_nos_chapter_heading.json")
-                                print("Clean up completed")
-                                yield f"data: Clean up of temporary OCR files completed\n\n"
-                            else:
-                                error_msg = "Chapter headings are blank. Unable to proceed."
-                                print(error_msg)
-                        else:
-                            error_msg = "Unable to extract text using OCR."
-                            print(error_msg)
+            if final_chapters:
+                # Rebuild full_text from chapters
+                full_text = " ".join(final_chapters)
 
-                pdf_doc.close()
-                    
-                book_metadata = {
-                    "file_id": book_id,
-                    "file_name": f"{book_id}.pdf",
-                    "page_count": page_count,
-                    "page_for_first_chapter": first_page_num,
-                    "total_chunks": len(final_chapters),
-                    "total_characters": len(full_text),
-                    "success": True
-                }
+        # Step 8: Create and return metadata
+        return create_book_metadata(
+            book_id, page_count, first_page_num,
+            final_chapters, full_text, error_msg
+        )
 
-                # if not error_msg:
-                #     collection_book_chunk_metadata.insert_one(book_metadata)
-                 #book_metadata["error"] = error_msg
-
-                for key, value in book_metadata.items():
-                    if isinstance(value, ObjectId):
-                        book_metadata[key] = str(value)
-
-                yield f"data: {json.dumps(book_metadata)}\n\n"
-                return
-            finally:
-                # Clean up temporary file
-                if os.path.exists(temp_pdf_path):
-                    os.unlink(temp_pdf_path)
     except Exception as e:
         print(f"❌ Error in get_book_chunks tool: {str(e)}")
-        error_data = {
+        return {
             "error": str(e),
             "success": False
         }
-        yield f"data: {json.dumps(error_data)}\n\n"
-        return
+
+    finally:
+        # Clean up temporary file
+        if temp_pdf_path and os.path.exists(temp_pdf_path):
+            os.unlink(temp_pdf_path)
 
 
 def clean_text(page_text):
@@ -881,9 +850,13 @@ async def book_analysis(book_id: str):
             if staging_doc:
                 print("Staging record found, now start chunking...")
                 yield f"data: Staging record found. Starting chunking process for book_id: {book_id}\n\n"
-                book_doc = get_book_chunks(book_id=book_id, chunk_size=25000)
-                number_of_chunks = book_doc["total_chunks"]
-                yield f"data: Chunking completed. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
+                book_doc = generate_book_chunks_events(book_id=book_id, chunk_size=25000)
+                if not book_doc["success"]:
+                    print("Error in processing book chunks: ", book_doc.get("error", "Unknown error"))
+                    yield f"data: Error in chunking process: {book_doc.get('error', 'Unknown error')} for book_id: {book_id}\n\n"
+                else:
+                    number_of_chunks = book_doc["total_chunks"]
+                    yield f"data: Chunking completed. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
             else:
                 number_of_chunks = 0
                 print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
