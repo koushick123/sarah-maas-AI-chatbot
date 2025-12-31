@@ -9,7 +9,7 @@ import fitz
 from PyPDF2 import PdfReader
 from bson import ObjectId
 
-from SarahMaasAzureOCR import extract_and_save_text_from_ocr_page
+# from SarahMaasAzureOCR import extract_and_save_text_from_ocr_page
 from SarahMaasSearchChapterHeadings import filter_chapter_headings_for_chapter_beginning
 from Sarah_Maas_Chatbot_Crescent_City import collection_book_chunk_metadata, collection_book_staging, \
     collection_book_chunks, fs
@@ -381,7 +381,7 @@ def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map_page_
     convert_pages_to_images(pdf_path, book_id, page_nums, ocr_page_count)
 
     # Extract text from OCR
-    extract_and_save_text_from_ocr_page(first_page_num, first_page_num + ocr_page_count, book_id)
+    # extract_and_save_text_from_ocr_page(first_page_num, first_page_num + ocr_page_count, book_id)
 
     # Filter chapter headings
     map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(
