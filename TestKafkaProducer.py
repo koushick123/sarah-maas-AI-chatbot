@@ -13,10 +13,10 @@ topic = 'mytopic'
 def sendKafkaMessage():
     # Send messages
     try:
-        for i in range(10):
+        for i in range(15):
             message = {
                 'id': i,
-                'message': f'Hello from message {i}',
+                'message': f'Hello from NEW OFFSET message {i}',
                 'timestamp': time.time()
             }
 
@@ -27,10 +27,9 @@ def sendKafkaMessage():
             result = future.get(timeout=10)
 
             print(f"Sent: {message}")
-            time.sleep(1)
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Error: {str(e)}")
 
     finally:
         producer.close()
