@@ -8,23 +8,28 @@ services:
       - "9094:9094"
     environment:
       KAFKA_CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"
-      # KRaft mode configuration
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      
-      # Listener configuration
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:9094
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      
-      # Storage configuration
-      # Use an accessible directory for logs. Update as per your setup.
-      KAFKA_LOG_DIRS: /workspaces/sarah-maas-AI-chatbot/kraft-combined-logs
+      KAFKA_LOG_DIRS: /var/lib/kafka/kraft-combined-logs
     volumes:
-      - kafka-data:/workspaces/sarah-maas-AI-chatbot/kraft-combined-logs
+      - kafka-data:/var/lib/kafka/kraft-combined-logs
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
+
+  # This helper container fixes the AccessDenied issue
+  volume-permissions:
+    image: busybox
+    user: "0:0" # Run as root to change ownership
+    volumes:
+      - kafka-data:/var/lib/kafka/kraft-combined-logs
+    command: chown -R 1000:1000 /var/lib/kafka/kraft-combined-logs
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
