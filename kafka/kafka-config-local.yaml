@@ -2,10 +2,12 @@ services:
   kafka:
     image: apache/kafka:4.1.1
     container_name: kafka-local
+    user: "1000:1000"
     ports:
       - "9092:9092"
       - "9094:9094"
     environment:
+      KAFKA_CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"
       # KRaft mode configuration
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -19,9 +21,10 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       
       # Storage configuration
-      KAFKA_LOG_DIRS: /var/lib/kafka/kraft-combined-logs
+      # Use an accessible directory for logs. Update as per your setup.
+      KAFKA_LOG_DIRS: /workspaces/sarah-maas-AI-chatbot/kraft-combined-logs
     volumes:
-      - kafka-data:/var/lib/kafka/data
+      - kafka-data:/workspaces/sarah-maas-AI-chatbot/kraft-combined-logs
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
