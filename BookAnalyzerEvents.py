@@ -9,6 +9,28 @@ import fitz
 from PyPDF2 import PdfReader
 from bson import ObjectId
 
+from kafka import KafkaProducer
+from pymongo import MongoClient
+import urllib.parse
+from Sarah_Maas_Chatbot_Crescent_City import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
+
+username = urllib.parse.quote_plus(decrypt_mongo_user())
+password = urllib.parse.quote_plus(decrypt_mongo_password())
+host_url = decrypt_mongo_hosturl()
+uri = f"mongodb+srv://{username}:{password}@{host_url}/?retryWrites=true&w=majority&appName=dev-cluster"
+
+client = MongoClient(uri)
+db = client["sarah-maas-db"]
+sm_map_page_nos_chap_heading_collection = db['sarah-maas-map-page-nos-chapter-heading']
+
+# Create producer
+producer = KafkaProducer(
+    bootstrap_servers=['localhost:9094'],
+    value_serializer=lambda v: json.dumps(v).encode('utf-8')
+)
+
+topic = 'mytopic'
+
 # from SarahMaasAzureOCR import extract_and_save_text_from_ocr_page
 from SarahMaasSearchChapterHeadings import filter_chapter_headings_for_chapter_beginning
 from Sarah_Maas_Chatbot_Crescent_City import collection_book_chunk_metadata, collection_book_staging, \
@@ -83,9 +105,7 @@ async def book_analyzer_events(book_id: str):
                         # Step 7: If no chapters found, try OCR
                         if not final_chapters:
                             print("No chapters found. Attempting OCR processing...")
-                            final_chapters, error_msg = process_with_ocr(
-                                temp_pdf_path, book_id, first_page_num, map_page_num_content, ocr_page_count=1
-                            )
+                            final_chapters, error_msg = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, ocr_page_count=1)
 
                             if final_chapters:
                                 # Rebuild full_text from chapters
@@ -93,10 +113,7 @@ async def book_analyzer_events(book_id: str):
 
                                 # Step 8: Create and return metadata
                                 yield f"data: OCR processing succeeded for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
-                                book_doc = create_book_metadata(
-                                    book_id, page_count, first_page_num,
-                                    final_chapters, full_text, error_msg
-                                )
+                                book_doc = create_book_metadata(book_id, page_count, first_page_num, final_chapters, full_text, error_msg)
 
                                 if not book_doc["success"]:
                                     print("Error in processing book chunks: ", book_doc.get("error", "Unknown error"))
@@ -461,3 +478,25 @@ def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pa
 
     pdf_doc.close()
     return count
+
+
+def publish_book_events_for_OCR(book_id: str, page_count: int):
+    """Publish book events for OCR processing."""
+    try:
+        page_index = 21
+        print("Starting to send messages...")
+        while page_index < page_count:
+            if sm_map_page_nos_chap_heading_collection.find_one({"page_num": page_index}):
+                print(f"Page {page_index} found in database, skipping...")
+                page_index += 1
+                continue  # Skip pages already in the database
+            test_image_path = f"pages_for_OCR/page_empire-of-storms-20251128095023-0d555bf7_{page_index}.jpg"
+            print(f"Sending message for page {page_index} with image path {test_image_path}")
+            producer.send(topic, {"book_id": book_id, "page_num": page_index, "image_path": test_image_path})
+            page_index += 1
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+
+    finally:
+        producer.close()

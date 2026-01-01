@@ -64,7 +64,7 @@ def run_consumer(worker_id):
             # 3. Use the parsed dictionary
             image_text = read_text_from_cropped_ocr_image(val['image_path'], val['page_num'])
             print(f"image text for page {val['page_num']}: {image_text[:5]}...")
-            createMongoClient().insert_one({"page_num": val['page_num'], "extracted_text": image_text[:10]})
+            createMongoClient().insert_one({"page_num": val['page_num'], "extracted_text": image_text[:15]})
 
     finally:
         c.close()
