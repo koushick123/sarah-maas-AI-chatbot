@@ -13,9 +13,6 @@ subscription_key = decrypt_azure_ocr_api()
 credentials = CognitiveServicesCredentials(subscription_key)
 client = ComputerVisionClient(endpoint, credentials)
 
-from tinydb import TinyDB, Query
-db = TinyDB('map_of_page_nos_chapter_heading.json')
-
 def read_text_from_cropped_ocr_image(image_path, page_num) -> str:
 
     start_image_ratio = 0.13
@@ -41,6 +38,7 @@ def read_text_from_cropped_ocr_image(image_path, page_num) -> str:
             read_response = client.read_in_stream(io.BytesIO(header_bytes), raw=True)
 
             # Get operation ID from response headers
+
             operation_id = read_response.headers["Operation-Location"].split("/")[-1]
 
             # Wait for the operation to complete
@@ -58,8 +56,9 @@ def read_text_from_cropped_ocr_image(image_path, page_num) -> str:
                     for line in page.lines:
                         if line.text.strip():
                             extracted_text.append(line.text)
-                print(f"Extracted text at ratio {start_image_ratio}-{end_image_ratio}: {extracted_text} for page number {page_num}")
+                print(f"Extracted text at ratio {start_image_ratio}-{end_image_ratio}: {extracted_text[:1]} for page number {page_num}")
         except Exception as e:
+            print("Exception during OCR image processing: " + str(e))
             if str(e).find("Too Many Requests") != -1:
                 print("Error during OCR image processing: " + str(e))
                 print("API call limit reached for free tier. Wait for a minute...")
@@ -68,19 +67,5 @@ def read_text_from_cropped_ocr_image(image_path, page_num) -> str:
                 continue
 
         start_image_ratio -= 0.01
-
+        
     return "".join(extracted_text)
-
-
-def extract_and_save_text_from_ocr_page(start, end, book_id: str):
-    ChapterMetaData = Query()
-    page_index = start
-    while page_index < end:
-        if db.search(ChapterMetaData.page_num == page_index):
-            print(f"Page {page_index} found in database, skipping...")
-            page_index += 1
-            continue  # Skip pages already in the database
-        test_image_path = f"pages_for_OCR/page_{book_id}_{page_index}.jpg"
-        text = read_text_from_cropped_ocr_image(test_image_path, page_index)
-        db.insert({'page_num': page_index, 'extracted_text': text[:10]})
-        page_index += 1

@@ -1,11 +1,23 @@
 import multiprocessing
 from confluent_kafka import Consumer, KafkaError
 from SarahMaasAzureOCR import read_text_from_cropped_ocr_image
-from tinydb import TinyDB
+from pymongo import MongoClient
+import urllib.parse
+from Sarah_Maas_Chatbot_Crescent_City import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
+
+username = urllib.parse.quote_plus(decrypt_mongo_user())
+password = urllib.parse.quote_plus(decrypt_mongo_password())
+host_url = decrypt_mongo_hosturl()
+uri = f"mongodb+srv://{username}:{password}@{host_url}/?retryWrites=true&w=majority&appName=dev-cluster"
+
+# Need to create a new MongoClient in each process for thread safety
+def createMongoClient():
+    client = MongoClient(uri)
+    db = client["sarah-maas-db"]
+    return db['sarah-maas-map-page-nos-chapter-heading']
 
 def run_consumer(worker_id):
-    db = TinyDB('map_of_page_nos_chapter_heading.json')
-    
+        
     # Configuration for 2025 KRaft and High-Latency OCR
     conf = {
         'bootstrap.servers': 'localhost:9094',
@@ -20,7 +32,7 @@ def run_consumer(worker_id):
         
         # 2. Max Poll Interval: Time allowed for OCR processing
         # Increase this if your OCR takes more than 5 minutes per batch
-        'max.poll.interval.ms': 60000, # 1 minutes
+        'max.poll.interval.ms': 300000, # 5 minutes
         
         'error_cb': lambda err: print(f"Worker {worker_id} Error: {err}")
     }
@@ -40,6 +52,7 @@ def run_consumer(worker_id):
 
              # 1. Decode the bytes to a string
             raw_payload = msg.value().decode('utf-8')
+            print(f"Worker {worker_id} received message: {raw_payload} from partition: {msg.partition()} at offset: {msg.offset()}")
             
             # 2. Parse the string into a Python dictionary
             # This will fail if the message was sent with single quotes
@@ -50,7 +63,8 @@ def run_consumer(worker_id):
             
             # 3. Use the parsed dictionary
             image_text = read_text_from_cropped_ocr_image(val['image_path'], val['page_num'])
-            db.insert({'page_num': val['page_num'], 'extracted_text': image_text[:10]})
+            print(f"image text for page {val['page_num']}: {image_text[:5]}...")
+            createMongoClient().insert_one({"page_num": val['page_num'], "extracted_text": image_text[:10]})
 
     finally:
         c.close()
