@@ -105,8 +105,14 @@ def fetch_vault_token() -> str:
         return f"Request failed: {e}"
 
 
+hardcoded_token = os.getenv("HARDCODED_VAULT_TOKEN")
+
 def fetch_decryption_key_from_vault(key: str) -> str:
-    vault_token = fetch_vault_token()
+    if hardcoded_token:
+        vault_token = hardcoded_token
+    else:
+        vault_token = fetch_vault_token()
+        
     if vault_token.startswith("Error:") or vault_token.startswith("Request failed:"):
         raise ValueError(vault_token)
     headers = {

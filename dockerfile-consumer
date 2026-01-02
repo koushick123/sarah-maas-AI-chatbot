@@ -9,11 +9,7 @@ COPY SarahMaasAzureOCR.py .
 COPY DecryptCredentials.py .
 
 # Encrypted credential files
-COPY encryptedazureocrapi.txt .
-COPY encryptedazureocrhost.txt .
-COPY encryptedopenapikey.txt .
-COPY encryptedmongouser.txt .
-COPY encryptedmongopassword.txt .
+COPY encrypted*.txt ./
 
 RUN pip install --no-cache-dir -r requirements-consumer.txt
 

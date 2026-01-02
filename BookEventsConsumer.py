@@ -20,7 +20,7 @@ def book_events_consumer(worker_id):
         
     # Configuration for 2025 KRaft and High-Latency OCR
     conf = {
-        'bootstrap.servers': 'localhost:9094',
+        'bootstrap.servers': 'kafka-local:9094',
         'group.id': 'test-group-2025',
         'auto.offset.reset': 'earliest',
         'enable.auto.commit': True,

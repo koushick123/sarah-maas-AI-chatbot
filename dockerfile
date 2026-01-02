@@ -9,7 +9,6 @@ ENV VAULT_RETRIEVER_ADDR=64.227.147.196:8300
 
 # Copy requirements and install dependencies
 COPY requirements.txt .
-COPY encrypted*.txt ./
 COPY vault-droplet/ssl/ca.crt ./vault-droplet/ssl/ca.crt
 RUN pip install --no-cache-dir -r requirements.txt
 
