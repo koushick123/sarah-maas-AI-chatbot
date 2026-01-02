@@ -1,0 +1,7 @@
+confluent_kafka
+pymongo
+azure-cognitiveservices-vision-computervision
+msrest
+cryptography
+Pillow
+requests

@@ -2,7 +2,7 @@ from kafka import KafkaProducer
 import json
 from pymongo import MongoClient
 import urllib.parse
-from Sarah_Maas_Chatbot_Crescent_City import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
+from SarahMaasChatbotCrescentCity import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
 
 username = urllib.parse.quote_plus(decrypt_mongo_user())
 password = urllib.parse.quote_plus(decrypt_mongo_password())

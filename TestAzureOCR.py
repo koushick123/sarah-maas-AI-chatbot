@@ -4,7 +4,7 @@ from azure.cognitiveservices.vision.computervision import ComputerVisionClient
 from azure.cognitiveservices.vision.computervision.models import OperationStatusCodes
 from msrest.authentication import CognitiveServicesCredentials
 import time
-from Sarah_Maas_Chatbot_Crescent_City import decrypt_azure_ocr_api, decrypt_azure_ocr_host
+from SarahMaasChatbotCrescentCity import decrypt_azure_ocr_api, decrypt_azure_ocr_host
 
 # Your Azure credentials
 endpoint = decrypt_azure_ocr_host()

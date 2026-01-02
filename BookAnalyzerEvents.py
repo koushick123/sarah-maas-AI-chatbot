@@ -12,7 +12,8 @@ from bson import ObjectId
 from kafka import KafkaProducer
 from pymongo import MongoClient
 import urllib.parse
-from Sarah_Maas_Chatbot_Crescent_City import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
+from confluent_kafka import Consumer, KafkaError
+from SarahMaasChatbotCrescentCity import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
 
 username = urllib.parse.quote_plus(decrypt_mongo_user())
 password = urllib.parse.quote_plus(decrypt_mongo_password())
@@ -33,7 +34,7 @@ topic = 'mytopic'
 
 # from SarahMaasAzureOCR import extract_and_save_text_from_ocr_page
 from SarahMaasSearchChapterHeadings import filter_chapter_headings_for_chapter_beginning
-from Sarah_Maas_Chatbot_Crescent_City import collection_book_chunk_metadata, collection_book_staging, \
+from SarahMaasChatbotCrescentCity import collection_book_chunk_metadata, collection_book_staging, \
     collection_book_chunks, fs
 
 
@@ -388,8 +389,8 @@ def split_long_chapters(chapters, max_chars=8000):
     return final_chunks
 
 
-def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map_page_num_content: dict,
-                     ocr_page_count: int = 1) -> tuple:
+async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map_page_num_content: dict,
+                     ocr_page_count: int = 1):
     """Process pages using OCR when regular text extraction fails."""
     full_text = ""
 
@@ -398,47 +399,74 @@ def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map_page_
     convert_pages_to_images(pdf_path, book_id, page_nums, ocr_page_count)
 
     # Extract text from OCR
-    # extract_and_save_text_from_ocr_page(first_page_num, first_page_num + ocr_page_count, book_id)
+    publish_book_events_for_OCR(book_id, first_page_num, 22)
+    
+    prev_processed_count = 0
+    items_processed = True
+    processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": {book_id}})
+    while True:
+        if processed_count >= len(page_nums):
+            print("All OCR pages processed.")
+            break
+        yield f"data: Scanned and anlyzed {processed_count} pages so far...\n\n"
+        print(f"Scanning pages to analyze...{processed_count} scanned so far.")
 
-    # Filter chapter headings
-    map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(
-        first_page_num, first_page_num + ocr_page_count
-    )
+        # Wait for 10 seconds
+        seconds_index = 0
+        while seconds_index < 10:
+            yield f"data: Will provide next update in {10 - seconds_index} seconds\n\n"
+            await asyncio.sleep(1)
+            seconds_index += 1
 
-    if not map_page_num_page_heading:
-        print("Unable to extract text using OCR.")
-        return None, "Unable to extract text using OCR."
+        # Refresh the count
+        processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": {book_id}})
+        if prev_processed_count !=0 and processed_count == prev_processed_count:
+            print("No progress in OCR processing, breaking to avoid infinite loop.")
+            items_processed = False
+            break
+        prev_processed_count = processed_count
+    
+    if items_processed:
+        yield f"data: OCR processing completed for book_id: {book_id}. Extracting chapter headings...\n\n"
+    else:
+        yield f"data: OCR processing stalled. Please try again later.\n\n"
+    # # Filter chapter headings
+    # map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, first_page_num + ocr_page_count)
 
-    # Get non-blank chapter headings
-    map_page_num_chapter_heading = {
-        page_no: page_heading
-        for page_no, page_heading in map_page_num_page_heading.items()
-        if page_heading
-    }
+    # if not map_page_num_page_heading:
+    #     print("Unable to extract text using OCR.")
+    #     return None, "Unable to extract text using OCR."
 
-    if not map_page_num_chapter_heading:
-        print("Chapter headings are blank. Unable to proceed.")
-        return None, "Chapter headings are blank. Unable to proceed."
+    # # Get non-blank chapter headings
+    # map_page_num_chapter_heading = {
+    #     page_no: page_heading
+    #     for page_no, page_heading in map_page_num_page_heading.items()
+    #     if page_heading
+    # }
 
-    # Add chapter prefixes
-    chapter_no = 1
-    for page_no in map_page_num_chapter_heading:
-        page_text = map_page_num_content[page_no]
-        page_prefix = f"Chapter {chapter_no}\n\n"
-        page_text = page_prefix + page_text
-        chapter_no += 1
-        page_text = clean_text(page_text)
-        full_text += page_text + " "
+    # if not map_page_num_chapter_heading:
+    #     print("Chapter headings are blank. Unable to proceed.")
+    #     return None, "Chapter headings are blank. Unable to proceed."
 
-    # Reprocess to split by chapters
-    chapters = split_into_chapters(full_text)
-    print(f"Total chapters extracted after OCR: {len(chapters)}")
-    final_chapters = split_long_chapters(chapters, 8000)
+    # # Add chapter prefixes
+    # chapter_no = 1
+    # for page_no in map_page_num_chapter_heading:
+    #     page_text = map_page_num_content[page_no]
+    #     page_prefix = f"Chapter {chapter_no}\n\n"
+    #     page_text = page_prefix + page_text
+    #     chapter_no += 1
+    #     page_text = clean_text(page_text)
+    #     full_text += page_text + " "
+
+    # # Reprocess to split by chapters
+    # chapters = split_into_chapters(full_text)
+    # print(f"Total chapters extracted after OCR: {len(chapters)}")
+    # final_chapters = split_long_chapters(chapters, 8000)
 
     # Clean up
     cleanup_ocr_files()
 
-    return final_chapters, None
+    yield f"[], None\n\n"
 
 
 def cleanup_ocr_files():
@@ -480,10 +508,10 @@ def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pa
     return count
 
 
-def publish_book_events_for_OCR(book_id: str, page_count: int):
+def publish_book_events_for_OCR(book_id: str, start_page, page_count: int):
     """Publish book events for OCR processing."""
     try:
-        page_index = 21
+        page_index = start_page
         print("Starting to send messages...")
         while page_index < page_count:
             if sm_map_page_nos_chap_heading_collection.find_one({"page_num": page_index}):

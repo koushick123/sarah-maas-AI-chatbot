@@ -3,7 +3,7 @@ from confluent_kafka import Consumer, KafkaError
 from SarahMaasAzureOCR import read_text_from_cropped_ocr_image
 from pymongo import MongoClient
 import urllib.parse
-from Sarah_Maas_Chatbot_Crescent_City import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
+from DecryptCredentials import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
 
 username = urllib.parse.quote_plus(decrypt_mongo_user())
 password = urllib.parse.quote_plus(decrypt_mongo_password())
@@ -16,7 +16,7 @@ def createMongoClient():
     db = client["sarah-maas-db"]
     return db['sarah-maas-map-page-nos-chapter-heading']
 
-def run_consumer(worker_id):
+def book_events_consumer(worker_id):
         
     # Configuration for 2025 KRaft and High-Latency OCR
     conf = {
@@ -64,7 +64,7 @@ def run_consumer(worker_id):
             # 3. Use the parsed dictionary
             image_text = read_text_from_cropped_ocr_image(val['image_path'], val['page_num'])
             print(f"image text for page {val['page_num']}: {image_text[:5]}...")
-            createMongoClient().insert_one({"page_num": val['page_num'], "extracted_text": image_text[:15]})
+            createMongoClient().insert_one({"book_id": val['book_id'], "page_num": val['page_num'], "extracted_text": image_text[:15]})
 
     finally:
         c.close()
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     processes = []
 
     for i in range(num_consumers):
-        p = multiprocessing.Process(target=run_consumer, args=(i,))
+        p = multiprocessing.Process(target=book_events_consumer, args=(i,))
         p.start()
         processes.append(p)
 
