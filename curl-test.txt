@@ -1,0 +1,1 @@
+curl -H  "X-Vault-Token: <Token>" http://localhost:8300/v1/sm-secrets/data/openapi_mongodb_credentials
