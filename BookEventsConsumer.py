@@ -70,8 +70,6 @@ def book_events_consumer(worker_id):
         c.close()
 
 if __name__ == "__main__":
-    # 3. Concurrent Consumers
-    # Set this to match your topic partition count (e.g., 4)
     num_consumers = 10 
     processes = []
 
