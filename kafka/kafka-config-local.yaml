@@ -19,7 +19,6 @@ services:
       
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_LOG_DIRS: /var/lib/kafka/kraft-combined-logs
-
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
@@ -27,17 +26,20 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
     volumes:
       - kafka-data:/var/lib/kafka/kraft-combined-logs
+    networks:
+      - sm-network
     depends_on:
       volume-permissions:
         condition: service_completed_successfully
 
-  # This helper container fixes the AccessDenied issue
   volume-permissions:
     image: busybox
-    user: "0:0" # Run as root to change ownership
+    user: "0:0"
     volumes:
       - kafka-data:/var/lib/kafka/kraft-combined-logs
     command: chown -R 1000:1000 /var/lib/kafka/kraft-combined-logs
+    networks:
+      - sm-network
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -47,9 +49,15 @@ services:
     environment:
       KAFKA_CLUSTERS_0_NAME: local
       KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-local:9092
+    networks:
+      - sm-network
     depends_on:
       - kafka
 
 volumes:
   kafka-data:
     driver: local
+
+networks:
+  sm-network:
+    external: true
