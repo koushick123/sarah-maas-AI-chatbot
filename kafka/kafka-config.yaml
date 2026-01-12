@@ -1,0 +1,63 @@
+services:
+  kafka:
+    image: apache/kafka:4.1.1
+    container_name: kafka-local
+    user: "1000:1000"
+    ports:
+      - "9092:9092"      # PLAINTEXT - for internal/Kafka UI
+      - "9094:9094"      # EXTERNAL - for outside Docker traffic
+    environment:
+      KAFKA_CLUSTER_ID: "Mk3OEYBSD34fcwNTJENDM2Qk"
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-local:9093
+      
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-local:9092,EXTERNAL://verbose-space-guide-69pj5p75vrp3pp9-9094.app.github.dev:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/kraft-combined-logs
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    volumes:
+      - kafka-data:/var/lib/kafka/kraft-combined-logs
+    networks:
+      - sm-network
+    depends_on:
+      volume-permissions:
+        condition: service_completed_successfully
+
+  volume-permissions:
+    image: busybox
+    user: "0:0"
+    volumes:
+      - kafka-data:/var/lib/kafka/kraft-combined-logs
+    command: chown -R 1000:1000 /var/lib/kafka/kraft-combined-logs
+    networks:
+      - sm-network
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-local:9092
+    networks:
+      - sm-network
+    depends_on:
+      - kafka
+
+volumes:
+  kafka-data:
+    driver: local
+
+networks:
+  sm-network:
+    external: true

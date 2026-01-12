@@ -8,7 +8,7 @@ else
     cd /workspaces/sarah-maas-AI-chatbot/kafka
 fi
 
-docker-compose -f kafka-config-local.yaml down
-docker-compose -f kafka-config-local.yaml up -d
+docker-compose -f kafka-config.yaml down
+docker-compose -f kafka-config.yaml up -d
 
 echo "Kafka Container started"

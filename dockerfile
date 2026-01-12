@@ -13,7 +13,7 @@ COPY vault-droplet/ssl/ca.crt ./vault-droplet/ssl/ca.crt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY Sarah_Maas_Chatbot_Crescent_City.py ./sarah_maas_chatbot_crescent_city.py
+COPY SarahMaasChatbotCrescentCity.py ./sarah_maas_chatbot_crescent_city.py
 
 # Expose FastAPI default port
 EXPOSE 8000

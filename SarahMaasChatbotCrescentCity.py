@@ -8,7 +8,7 @@ from datetime import datetime
 from fastapi import FastAPI
 from fastapi import Form, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from gridfs import GridFS
 from langchain.chains import LLMChain
 from langchain.chains.summarize import load_summarize_chain
@@ -18,7 +18,7 @@ from langchain.schema import Document
 from pydantic import BaseModel
 from pymongo import MongoClient
 
-# Initialize FastAPI app
+# Initialize FastAPI
 app = FastAPI()
 from DecryptCredentials import decrypt_openapi_key
 
@@ -474,3 +474,28 @@ async def events():
             'Connection': 'keep-alive'
         }
     )
+
+
+@app.get("/book/read_text_from_cropped_ocr_image/{image_path}")
+def read_text_from_cropped_ocr_image(image_path: str):
+    """
+    Endpoint to read text from cropped OCR image.
+    """
+    from SarahMaasAzureOCR import read_text_from_cropped_ocr_image
+
+    extracted_text = read_text_from_cropped_ocr_image(image_path)
+    return extracted_text
+
+
+@app.get("/book/decrypt_mongo_credentials")
+def decrypt_mongo_credentials():
+    """
+    Endpoint to decrypt and return Mongo DB credentials.
+    """
+    from DecryptCredentials import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
+
+    return JSONResponse(content={
+    "mongo_user": decrypt_mongo_user(),
+    "mongo_password": decrypt_mongo_password(),
+    "mongo_hosturl": decrypt_mongo_hosturl()
+    })
