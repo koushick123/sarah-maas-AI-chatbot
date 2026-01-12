@@ -13,15 +13,16 @@ subscription_key = decrypt_azure_ocr_api()
 credentials = CognitiveServicesCredentials(subscription_key)
 client = ComputerVisionClient(endpoint, credentials)
 
-def read_text_from_cropped_ocr_image(image_path, page_num) -> str:
+def read_text_from_cropped_ocr_image(image_path) -> str:
 
     start_image_ratio = 0.13
     end_image_ratio = 0.19
     extracted_text = []
+    file_path_prefix = "pages_for_OCR/"
     # Iteratively increase the crop ratio until text is found or max ratio is reached
     while (end_image_ratio - start_image_ratio) <= 0.1 and not extracted_text:
         # Load image with Pillow
-        img = Image.open(image_path)
+        img = Image.open(file_path_prefix + image_path)
         w, h = img.size
 
         header_height_start = int(h * start_image_ratio)

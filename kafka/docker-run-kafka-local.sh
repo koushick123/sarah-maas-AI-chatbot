@@ -2,7 +2,7 @@
 
 if [ "$1" = "local" ]; then
     echo "Run Kafka from local path"
-    cd /home/koushick/Young-Adult-Chatbot/sarah-maas-AI-chatbot/kafka
+    cd /home/koushick/Young-Adult-ChatBot/kafka
 else
     echo "Run Kafka from codespaces path"
     cd /workspaces/sarah-maas-AI-chatbot/kafka
