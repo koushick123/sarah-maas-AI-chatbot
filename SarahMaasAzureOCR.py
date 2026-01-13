@@ -57,7 +57,7 @@ def read_text_from_cropped_ocr_image(image_path) -> str:
                     for line in page.lines:
                         if line.text.strip():
                             extracted_text.append(line.text)
-                print(f"Extracted text at ratio {start_image_ratio}-{end_image_ratio}: {extracted_text[:1]} for page number {page_num}")
+                print(f"Extracted text at ratio {start_image_ratio}-{end_image_ratio}: {extracted_text[:1]}")
         except Exception as e:
             print("Exception during OCR image processing: " + str(e))
             if str(e).find("Too Many Requests") != -1:
