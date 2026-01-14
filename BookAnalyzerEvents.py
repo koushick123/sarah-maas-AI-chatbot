@@ -4,16 +4,15 @@ import os
 import re
 import shutil
 import tempfile
+import urllib.parse
 
 import fitz
 from PyPDF2 import PdfReader
 from bson import ObjectId
-
-from kafka import KafkaProducer
 from pymongo import MongoClient
-import urllib.parse
-from confluent_kafka import Consumer, KafkaError
+
 from SarahMaasChatbotCrescentCity import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
+from kafka import KafkaProducer
 
 username = urllib.parse.quote_plus(decrypt_mongo_user())
 password = urllib.parse.quote_plus(decrypt_mongo_password())
@@ -33,7 +32,6 @@ producer = KafkaProducer(
 topic = 'mytopic'
 
 # from SarahMaasAzureOCR import extract_and_save_text_from_ocr_page
-from SarahMaasSearchChapterHeadings import filter_chapter_headings_for_chapter_beginning
 from SarahMaasChatbotCrescentCity import collection_book_chunk_metadata, collection_book_staging, \
     collection_book_chunks, fs
 
@@ -408,7 +406,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
         if processed_count >= len(page_nums):
             print("All OCR pages processed.")
             break
-        yield f"data: Scanned and anlyzed {processed_count} pages so far...\n\n"
+        yield f"data: Scanned and analyzed {processed_count} pages so far...\n\n"
         print(f"Scanning pages to analyze...{processed_count} scanned so far.")
 
         # Wait for 10 seconds
@@ -468,12 +466,13 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
 
     yield f"[], None\n\n"
 
+image_file_path = "/home/koushick/sarah-maas-pages-for-OCR"
 
 def cleanup_ocr_files():
     """Clean up temporary OCR files."""
     try:
-        if os.path.exists("pages_for_OCR"):
-            shutil.rmtree("pages_for_OCR")
+        if os.path.exists(image_file_path):
+            shutil.rmtree(image_file_path)
         if os.path.exists("map_of_page_nos_chapter_heading.json"):
             os.remove("map_of_page_nos_chapter_heading.json")
         print("Clean up completed")
@@ -484,7 +483,7 @@ def cleanup_ocr_files():
 def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pages: int = 1):
     """Convert PDF pages to images for OCR processing."""
     pdf_doc = fitz.open(pdf_path)
-    os.makedirs("pages_for_OCR", exist_ok=True)
+    os.makedirs(image_file_path, exist_ok=True)
 
     count = 0
     for page_num in page_nums:
@@ -518,7 +517,7 @@ def publish_book_events_for_OCR(book_id: str, start_page, page_count: int):
                 print(f"Page {page_index} found in database, skipping...")
                 page_index += 1
                 continue  # Skip pages already in the database
-            test_image_path = f"pages_for_OCR/page_empire-of-storms-20251128095023-0d555bf7_{page_index}.jpg"
+            test_image_path = f"{image_file_path}/page_empire-of-storms-20251128095023-0d555bf7_{page_index}.jpg"
             print(f"Sending message for page {page_index} with image path {test_image_path}")
             producer.send(topic, {"book_id": book_id, "page_num": page_index, "image_path": test_image_path})
             page_index += 1
