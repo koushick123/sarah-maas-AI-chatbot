@@ -104,7 +104,22 @@ async def book_analyzer_events(book_id: str):
                         # Step 7: If no chapters found, try OCR
                         if not final_chapters:
                             print("No chapters found. Attempting OCR processing...")
-                            final_chapters, error_msg = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, ocr_page_count=1)
+                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, page_count)
+                            
+                            # Process the async generator and forward progress updates
+                            async for update in ocr_generator:
+                                # Forward progress updates
+                                yield update
+                                
+                                # Check if this is the final result
+                                if update.startswith("[]"):
+                                    # Parse the final result from the yielded string
+                                    try:
+                                        import ast
+                                        final_result = ast.literal_eval(update.split('\n\n')[0])
+                                        final_chapters, error_msg = final_result
+                                    except:
+                                        final_chapters, error_msg = [], "OCR processing failed"
 
                             if final_chapters:
                                 # Rebuild full_text from chapters
@@ -387,21 +402,20 @@ def split_long_chapters(chapters, max_chars=8000):
     return final_chunks
 
 
-async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map_page_num_content: dict,
-                     ocr_page_count: int = 1):
+async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map_page_num_content: dict, ocr_page_count):
     """Process pages using OCR when regular text extraction fails."""
     full_text = ""
 
     # Convert pages to images
     page_nums = list(map_page_num_content.keys())[:ocr_page_count]
-    convert_pages_to_images(pdf_path, book_id, page_nums, ocr_page_count)
+    convert_pages_to_images(pdf_path, book_id, page_nums, 10)
 
     # Extract text from OCR
-    publish_book_events_for_OCR(book_id, first_page_num, 22)
+    publish_book_events_for_OCR(book_id, first_page_num, 32)
     
     prev_processed_count = 0
     items_processed = True
-    processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": {book_id}})
+    processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": book_id})
     while True:
         if processed_count >= len(page_nums):
             print("All OCR pages processed.")
@@ -417,7 +431,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
             seconds_index += 1
 
         # Refresh the count
-        processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": {book_id}})
+        processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": book_id})
         if prev_processed_count !=0 and processed_count == prev_processed_count:
             print("No progress in OCR processing, breaking to avoid infinite loop.")
             items_processed = False
@@ -462,25 +476,28 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
     # final_chapters = split_long_chapters(chapters, 8000)
 
     # Clean up
-    cleanup_ocr_files()
+    # cleanup_ocr_files(book_id)
 
     yield f"[], None\n\n"
 
 image_file_path = "/home/koushick/sarah-maas-pages-for-OCR"
 
-def cleanup_ocr_files():
+def cleanup_ocr_files(book_id: str):
     """Clean up temporary OCR files."""
     try:
         if os.path.exists(image_file_path):
-            shutil.rmtree(image_file_path)
+            # Remove files containing book_id
+            for file in os.listdir(image_file_path):
+                if book_id in file:
+                    os.remove(os.path.join(image_file_path, file))
         if os.path.exists("map_of_page_nos_chapter_heading.json"):
             os.remove("map_of_page_nos_chapter_heading.json")
-        print("Clean up completed")
+        print(f"Cleaned up JPG files created for {book_id}")
     except Exception as e:
         print(f"Error during cleanup: {e}")
 
 
-def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pages: int = 1):
+def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pages):
     """Convert PDF pages to images for OCR processing."""
     pdf_doc = fitz.open(pdf_path)
     os.makedirs(image_file_path, exist_ok=True)
@@ -490,7 +507,7 @@ def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pa
         if count >= max_pages:
             break
 
-        output_path = f"pages_for_OCR/page_{book_id}_{page_num}.jpg"
+        output_path = f"{image_file_path}/page_{book_id}_{page_num}.jpg"
 
         if os.path.exists(output_path):
             count += 1
@@ -507,19 +524,19 @@ def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pa
     return count
 
 
-def publish_book_events_for_OCR(book_id: str, start_page, page_count: int):
+def publish_book_events_for_OCR(book_id: str, start_page, page_num: int):
     """Publish book events for OCR processing."""
     try:
         page_index = start_page
         print("Starting to send messages...")
-        while page_index < page_count:
+        while page_index < page_num - 1:
             if sm_map_page_nos_chap_heading_collection.find_one({"page_num": page_index}):
                 print(f"Page {page_index} found in database, skipping...")
                 page_index += 1
                 continue  # Skip pages already in the database
-            test_image_path = f"{image_file_path}/page_empire-of-storms-20251128095023-0d555bf7_{page_index}.jpg"
-            print(f"Sending message for page {page_index} with image path {test_image_path}")
-            producer.send(topic, {"book_id": book_id, "page_num": page_index, "image_path": test_image_path})
+            image_path = f"page_{book_id}_{page_index}.jpg"
+            print(f"Sending message for page {page_index} with image path {image_path}")
+            producer.send(topic, {"book_id": book_id, "page_num": page_index, "image_path": image_path})
             page_index += 1
         
     except Exception as e:

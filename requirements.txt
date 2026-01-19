@@ -7,5 +7,3 @@ cryptography
 uvicorn
 pymongo
 requests
-azure.ai.vision.imageanalysis
-azure.core.credentials
