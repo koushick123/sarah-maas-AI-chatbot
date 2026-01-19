@@ -104,7 +104,7 @@ async def book_analyzer_events(book_id: str):
                         # Step 7: If no chapters found, try OCR
                         if not final_chapters:
                             print("No chapters found. Attempting OCR processing...")
-                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, page_count)
+                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, 20)
                             
                             # Process the async generator and forward progress updates
                             async for update in ocr_generator:
@@ -403,40 +403,50 @@ def split_long_chapters(chapters, max_chars=8000):
 
 
 async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map_page_num_content: dict, ocr_page_count):
-    """Process pages using OCR when regular text extraction fails."""
-    full_text = ""
-
     # Convert pages to images
     page_nums = list(map_page_num_content.keys())[:ocr_page_count]
-    convert_pages_to_images(pdf_path, book_id, page_nums, 10)
+    convert_pages_to_images(pdf_path, book_id, page_nums, ocr_page_count)
 
     # Extract text from OCR
-    publish_book_events_for_OCR(book_id, first_page_num, 32)
+    end_page_num = first_page_num + ocr_page_count
+    publish_book_events_for_OCR(book_id, first_page_num, end_page_num)
     
-    prev_processed_count = 0
     items_processed = True
     processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": book_id})
+    exponential_backoff_count = 0
+    base_wait_time = 5
     while True:
-        if processed_count >= len(page_nums):
+        if processed_count >= ocr_page_count:
             print("All OCR pages processed.")
             break
         yield f"data: Scanned and analyzed {processed_count} pages so far...\n\n"
         print(f"Scanning pages to analyze...{processed_count} scanned so far.")
 
-        # Wait for 10 seconds
+        # Calculate wait time with exponential backoff
+        time_to_wait = base_wait_time * (2 ** exponential_backoff_count)
+        print(f"Waiting for {time_to_wait} seconds (backoff level: {exponential_backoff_count})")
+        
         seconds_index = 0
-        while seconds_index < 10:
-            yield f"data: Will provide next update in {10 - seconds_index} seconds\n\n"
+        while seconds_index < time_to_wait:
+            yield f"data: Will provide next update in {time_to_wait - seconds_index} seconds\n\n"
             await asyncio.sleep(1)
             seconds_index += 1
 
         # Refresh the count
-        processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": book_id})
-        if prev_processed_count !=0 and processed_count == prev_processed_count:
-            print("No progress in OCR processing, breaking to avoid infinite loop.")
-            items_processed = False
-            break
         prev_processed_count = processed_count
+        processed_count = sm_map_page_nos_chap_heading_collection.count_documents({"page_num": {"$in": page_nums}, "book_id": book_id})
+        
+        # Check for no progress condition
+        if prev_processed_count != 0 and processed_count == prev_processed_count:
+            exponential_backoff_count += 1
+            if exponential_backoff_count >= 4:
+                print("Maximum exponential backoff reached (4 doublings), breaking to avoid infinite loop.")
+                items_processed = False
+                break
+            print(f"No progress in OCR processing, applying exponential backoff (level {exponential_backoff_count}).")
+        else:
+            # Reset backoff count when progress is made
+            exponential_backoff_count = 0
     
     if items_processed:
         yield f"data: OCR processing completed for book_id: {book_id}. Extracting chapter headings...\n\n"
@@ -524,12 +534,12 @@ def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pa
     return count
 
 
-def publish_book_events_for_OCR(book_id: str, start_page, page_num: int):
+def publish_book_events_for_OCR(book_id: str, start_page, end_page_num: int):
     """Publish book events for OCR processing."""
     try:
         page_index = start_page
         print("Starting to send messages...")
-        while page_index < page_num - 1:
+        while page_index < end_page_num:
             if sm_map_page_nos_chap_heading_collection.find_one({"page_num": page_index}):
                 print(f"Page {page_index} found in database, skipping...")
                 page_index += 1
@@ -541,6 +551,3 @@ def publish_book_events_for_OCR(book_id: str, start_page, page_num: int):
         
     except Exception as e:
         print(f"Error: {str(e)}")
-
-    finally:
-        producer.close()
