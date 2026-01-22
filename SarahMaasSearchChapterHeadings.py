@@ -1,11 +1,18 @@
 import re
-from tinydb import TinyDB, Query
-db = TinyDB('map_of_page_nos_chapter_heading.json')
+from pymongo import MongoClient
+import urllib.parse
+from SarahMaasChatbotCrescentCity import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
 
-ChapterHeading = Query()
+username = urllib.parse.quote_plus(decrypt_mongo_user())
+password = urllib.parse.quote_plus(decrypt_mongo_password())
+host_url = decrypt_mongo_hosturl()
+uri = f"mongodb+srv://{username}:{password}@{host_url}/?retryWrites=true&w=majority&appName=dev-cluster"
 
-def extract_chapter_text_from_db(page_num) -> str:
-    record = db.get(ChapterHeading.page_num == page_num)
+client = MongoClient(uri)
+chapter_heading_collection = client["sarah-maas-db"]['sarah-maas-map-page-nos-chapter-heading']
+
+def extract_chapter_text_from_db(page_num,book_id) -> str:
+    record = chapter_heading_collection.find_one({"page_num": page_num, "book_id": book_id})
     if record is not None:
         return str(record['extracted_text'])
     return ""
@@ -17,10 +24,10 @@ def cleanup_text(text: str) -> str:
     return text
     
 
-def filter_chapter_headings_for_chapter_beginning(start, end) -> dict[int, str]:
+def filter_chapter_headings_for_chapter_beginning(start, end, book_id) -> dict[int, str]:
     page_num_with_chapter_headings = {}
     while start < end:
-        line = extract_chapter_text_from_db(start)
+        line = extract_chapter_text_from_db(start, book_id)
         # Pattern: Match empty OR (non-ASCII chars + optional digits/symbols)
         # Exclude any line with ASCII letters
         if check_if_chapter_heading(line):
