@@ -113,33 +113,26 @@ async def book_analyzer_events(book_id: str):
                         # Step 7: If no chapters found, try OCR
                         if not final_chapters:
                             print("No chapters found. Attempting OCR processing...")
-                            yield f"data: No chapters found. Attempting OCR processing.."
+                            yield f"data: No chapters found. Attempting OCR processing..\n\n"
                             await asyncio.sleep(0.5)
                             page_count = (end_page_num-first_page_num)
                             ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, 2)
                             
                             # Process the async generator and forward progress updates
+                            final_chapters = None
                             async for update in ocr_generator:
-                                # Forward progress updates
-                                yield update
-                                
-                                # Check if this is the final result
-                                if update.startswith("[]"):
-                                    # Parse the final result from the yielded string
-                                    try:
-                                        import ast
-                                        final_result = ast.literal_eval(update.split('\n\n')[0])
-                                        final_chapters, error_msg = final_result
-                                    except:
-                                        final_chapters, error_msg = [], "OCR processing failed"
+                                # Check if this is the final result (not a string)
+                                if not isinstance(update, str):
+                                    final_chapters = update
+                                else:
+                                    # Forward progress updates
+                                    yield update
 
                             if final_chapters:
-                                # Rebuild full_text from chapters
-                                full_text = " ".join(final_chapters)
-
                                 # Step 8: Create and return metadata
                                 yield f"data: OCR processing succeeded for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
                                 book_doc = create_book_metadata(book_id, (end_page_num-first_page_num), first_page_num, final_chapters, full_text, error_msg)
+                                print("Book metadata: ", book_doc)
 
                                 if not book_doc["success"]:
                                     print("Error in processing book chunks: ", book_doc.get("error", "Unknown error"))
@@ -429,9 +422,8 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
     
     # Process the async generator and forward progress updates
     async for update in check_ocr_processed_pages(book_id, page_nums, ocr_page_count):
-        # Forward progress updates
-        yield update
-        
+        print(update)
+
         # Check if this is the final completion message
         if "All OCR pages processed" in update:
             items_processed = True
@@ -457,32 +449,36 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
          for page_no, page_heading in map_page_num_page_heading.items() if page_heading
     }
 
+    final_chapters = {}
     if not map_page_num_chapter_heading:
         print("Chapter headings are blank. Unable to proceed.")
         yield f"data: Chapter headings are blank. Unable to proceed.\n\n"
         await asyncio.sleep(0.5)
+    else:
+        # Add chapter prefixes
+        chapter_no = 1
+        full_text = ""
+        for page_no in map_page_num_chapter_heading:
+            page_text = map_page_num_content[page_no]
+            page_prefix = f"Chapter {chapter_no}\n\n"
+            page_text = page_prefix + page_text
+            chapter_no += 1
+            page_text = clean_text(page_text)
+            full_text += page_text + " "
 
-    # # Add chapter prefixes
-    # chapter_no = 1
-    # for page_no in map_page_num_chapter_heading:
-    #     page_text = map_page_num_content[page_no]
-    #     page_prefix = f"Chapter {chapter_no}\n\n"
-    #     page_text = page_prefix + page_text
-    #     chapter_no += 1
-    #     page_text = clean_text(page_text)
-    #     full_text += page_text + " "
-
-    # # Reprocess to split by chapters
-    # chapters = split_into_chapters(full_text)
-    # print(f"Total chapters extracted after OCR: {len(chapters)}")
-    # final_chapters = split_long_chapters(chapters, 8000)
+        # Reprocess to split by chapters
+        chapters = split_into_chapters(full_text)
+        print(f"Total chapters extracted after OCR: {len(chapters)}")
+        final_chapters = split_long_chapters(chapters, 8000)
 
     yield f"data: Perform Cleanup\n\n"
     await asyncio.sleep(0.5)
     # Clean up
     cleanup_ocr_files(book_id)
-
-    yield f"data: OCR Processing Completed\n\n"
+    if final_chapters:
+        yield final_chapters
+    else:
+        yield None
 
 file_path_prefix = "/home/koushick/sarah-maas-pages-for-OCR"
 
@@ -495,6 +491,8 @@ async def check_ocr_processed_pages(book_id: str, page_nums: [], ocr_page_count:
     while True:
         if processed_count >= ocr_page_count:
             print("All OCR pages processed.")
+            yield f"data: All OCR pages processed.\n\n"
+            await asyncio.sleep(0.5)
             break
         yield f"data: Scanned and analyzed {processed_count} pages so far...\n\n"
         print(f"Scanning pages to analyze...{processed_count} scanned so far.")
@@ -519,7 +517,8 @@ async def check_ocr_processed_pages(book_id: str, page_nums: [], ocr_page_count:
             exponential_backoff_count += 1
             if exponential_backoff_count >= 4:
                 print("Maximum exponential backoff reached (4 doublings), breaking to avoid infinite loop.")
-                items_processed = False
+                yield f"data: Maximum exponential backoff reached (4 doublings), breaking to avoid infinite loop.\n\n"
+                await asyncio.sleep(0.5)
                 break
             print(f"No progress in OCR processing, applying exponential backoff (level {exponential_backoff_count}).")
         else:
