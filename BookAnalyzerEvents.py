@@ -22,6 +22,8 @@ uri = f"mongodb+srv://{username}:{password}@{host_url}/?retryWrites=true&w=major
 client = MongoClient(uri)
 db = client["sarah-maas-db"]
 sm_map_page_nos_chap_heading_collection = db['sarah-maas-map-page-nos-chapter-heading']
+book_chunk_metadata_collection = db["sarah-maas-books-metadata"]
+book_chunk_collection = db["sarah-maas-books-chunk"]
 
 # Create producer
 producer = KafkaProducer(
@@ -43,6 +45,7 @@ async def book_analyzer_events(book_id: str):
     yield f"data: Checking chunk metadata for book_id: {book_id}\n\n"
     await asyncio.sleep(0.5)
 
+    temp_pdf_path = ""
     try:
         book_doc = collection_book_chunk_metadata.find_one({"file_id": book_id})
         await asyncio.sleep(0.5)
@@ -116,7 +119,7 @@ async def book_analyzer_events(book_id: str):
                             yield f"data: No chapters found. Attempting OCR processing..\n\n"
                             await asyncio.sleep(0.5)
                             page_count = (end_page_num-first_page_num)
-                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, 2)
+                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, 20)
                             
                             # Process the async generator and forward progress updates
                             final_chapters = None
@@ -140,6 +143,11 @@ async def book_analyzer_events(book_id: str):
                                 else:
                                     number_of_chunks = book_doc["total_chunks"]
                                     yield f"data: Chunking completed. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
+                                    book_doc["book_id"]=book_id
+                                    save_book_metadata(book_doc)
+                                    yield f"Book Metadata Saved for {book_id}"
+                                    save_book_chunks(final_chapters)
+                                    yield f"Book Chunks Saved for {book_id}"
                             else:
                                 yield f"data: OCR processing failed for book_id: {book_id}. {error_msg}\n\n"
                         else:
@@ -182,6 +190,7 @@ def check_existing_chunks(book_id: str):
         return chunks_dict
     return None
 
+
 def fetch_pdf_from_gridfs(book_id: str):
     """Retrieve PDF binary from GridFS."""
     file_id = ObjectId(collection_book_staging.find_one({"book_id": book_id})["file_id"])
@@ -190,12 +199,14 @@ def fetch_pdf_from_gridfs(book_id: str):
     print(f"📄 PDF fetched, size: {len(pdf_binary)} bytes")
     return pdf_binary
 
+
 def create_temp_pdf(pdf_binary: bytes):
     """Create a temporary PDF file from binary data."""
     temp_pdf = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf')
     temp_pdf.write(pdf_binary)
     temp_pdf.close()
     return temp_pdf.name
+
 
 def find_first_chapter_page(pdf_path: str):
     """Find the page number where the first chapter begins."""
@@ -295,6 +306,22 @@ def create_book_metadata(book_id: str, page_count: int, first_page_num: int,
             metadata[key] = str(value)
 
     return metadata
+
+
+def save_book_metadata(book_metadata: dict):
+    # Remove any prior metadata entries since only one should be present
+    book_id_remove = book_metadata["book_id"]
+    if book_chunk_metadata_collection.find_one({"file_id": book_id_remove}):
+        book_chunk_metadata_collection.delete_one({"file_id": book_id_remove})
+    return book_chunk_metadata_collection.insert_one(book_metadata).inserted_id
+
+
+def save_book_chunks(chapter_data: dict):
+    # Remove any prior metadata entries since only one should be present
+    book_id_remove = chapter_data["book_id"]
+    if book_chunk_collection.find_one({"book_id": book_id_remove}):
+        book_chunk_collection.delete_one({"book_id": book_id_remove})
+    book_chunk_collection.insert_one(chapter_data)
 
 
 def extract_text_from_pages(pdf_path: str, first_page_num: int, page_count: int):
