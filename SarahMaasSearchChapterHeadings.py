@@ -26,6 +26,9 @@ def cleanup_text(text: str) -> str:
 
 def filter_chapter_headings_for_chapter_beginning(start, end, book_id) -> dict[int, str]:
     page_num_with_chapter_headings = {}
+    chapter_page_range = {}
+    chapter_no = 1
+    page_range = []
     while start < end:
         line = extract_chapter_text_from_db(start, book_id)
         # Pattern: Match empty OR (non-ASCII chars + optional digits/symbols)
@@ -33,6 +36,11 @@ def filter_chapter_headings_for_chapter_beginning(start, end, book_id) -> dict[i
         if check_if_chapter_heading(line):
             page_num_with_chapter_headings[start] = line
             print(f"Chapter heading found on page {start}: {line}")
+            chapter_page_range[chapter_no-1] = page_range
+            print(f"Chapter page range = {chapter_page_range}")
+            chapter_no += 1
+            page_range.clear()
+        page_range.append(start)
         start += 1
     return page_num_with_chapter_headings
 

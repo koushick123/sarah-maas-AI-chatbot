@@ -108,7 +108,7 @@ async def book_analyzer_events(book_id: str):
                         yield f"data: Text extraction completed for book_id: {book_id}, total characters: {len(full_text)}\n\n"
                         await asyncio.sleep(0.5)
                         # Step 6: Process chapters
-                        final_chapters = process_chapters_from_text(full_text)
+                        final_chapters = process_chapters_from_text(full_text, book_id)
                         error_msg = None
 
                         yield f"data: Chapter processing completed for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
@@ -143,11 +143,13 @@ async def book_analyzer_events(book_id: str):
                                 else:
                                     number_of_chunks = book_doc["total_chunks"]
                                     yield f"data: Chunking completed. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
-                                    book_doc["book_id"]=book_id
-                                    save_book_metadata(book_doc)
-                                    yield f"Book Metadata Saved for {book_id}"
-                                    save_book_chunks(final_chapters)
-                                    yield f"Book Chunks Saved for {book_id}"
+                                    book_doc["book_id"] = book_id
+                                    save_result = save_book_metadata_and_chunks(book_doc, final_chapters)
+                                    
+                                    if save_result["success"]:
+                                        yield f"Book Metadata and Chunks Saved for {book_id}\n\n"
+                                    else:
+                                        yield f"Error saving book data for {book_id}: {save_result['error']}\n\n"
                             else:
                                 yield f"data: OCR processing failed for book_id: {book_id}. {error_msg}\n\n"
                         else:
@@ -308,6 +310,46 @@ def create_book_metadata(book_id: str, page_count: int, first_page_num: int,
     return metadata
 
 
+def save_book_metadata_and_chunks(book_metadata: dict, chapter_data: dict):
+    """Save both book metadata and chunks in a single transaction."""
+    try:
+        # Start a session for the transaction
+        with client.start_session() as session:
+            with session.start_transaction():
+                # Delete existing metadata and chunks for this book_id
+                print(f"Book metadata = {book_metadata}")
+                book_id = book_metadata["book_id"]
+                
+                # Remove existing metadata
+                if book_chunk_metadata_collection.find_one({"file_id": book_id}, session=session):
+                    book_chunk_metadata_collection.delete_one({"file_id": book_id}, session=session)
+
+                # Remove existing chunks
+                if book_chunk_collection.find_one({"book_id": book_id}, session=session):
+                    book_chunk_collection.delete_one({"book_id": book_id}, session=session)
+
+                print(f"Delete existing metadata and chunks for book_id: {book_id}")
+                # Insert new metadata and chunks
+                metadata_result = book_chunk_metadata_collection.insert_one(book_metadata, session=session)
+                print(f"Book metadata inserted")
+                chunks_result = book_chunk_collection.insert_many(chapter_data, session=session)
+                print(f"Book chunks inserted")
+                
+                return {
+                    "metadata_id": metadata_result.inserted_id,
+                    "chunks_id": chunks_result.inserted_ids,
+                    "success": True
+                }
+    except Exception as e:
+        # If transaction fails (e.g., no replica set), fall back to individual operations
+        print(f"Saving book metadata and/or chunks have failed:  {str(e)}")
+        return {
+            "metadata_id": -1,
+            "chunks_id": -1,
+            "success": False
+        }
+
+
 def save_book_metadata(book_metadata: dict):
     # Remove any prior metadata entries since only one should be present
     book_id_remove = book_metadata["book_id"]
@@ -321,7 +363,7 @@ def save_book_chunks(chapter_data: dict):
     book_id_remove = chapter_data["book_id"]
     if book_chunk_collection.find_one({"book_id": book_id_remove}):
         book_chunk_collection.delete_one({"book_id": book_id_remove})
-    book_chunk_collection.insert_one(chapter_data)
+    return book_chunk_collection.insert_one(chapter_data).inserted_id
 
 
 def extract_text_from_pages(pdf_path: str, first_page_num: int, page_count: int):
@@ -357,17 +399,17 @@ def clean_text(page_text):
     return page_text.strip()
 
 
-def process_chapters_from_text(full_text: str):
+def process_chapters_from_text(full_text: str, book_id: str):
     """Split text into chapters and handle long chapters."""
-    chapters = split_into_chapters(full_text)
+    chapters = split_into_chapters(full_text, book_id)
     print(f"Total chapters extracted: {len(chapters)}")
 
     if chapters:
-        return split_long_chapters(chapters, 8000)
+        return split_long_chapters(chapters, 8000, book_id)
     return []
 
 
-def split_into_chapters(full_text):
+def split_into_chapters(full_text, book_id):
     chapter_regex = re.compile(
         r"chapter[\n\r]?[\s]*[\d]*",
         re.MULTILINE | re.IGNORECASE
@@ -393,6 +435,7 @@ def split_into_chapters(full_text):
         print(f"Chapter number {chapter_number}")
         print(f"Chapter text {chapter_text[:20]}")
         chapters.append({
+            "book_id": book_id,
             "chapter": chapter_number,
             "text": chapter_text
         })
@@ -400,7 +443,7 @@ def split_into_chapters(full_text):
     return chapters
 
 
-def split_long_chapters(chapters, max_chars=8000):
+def split_long_chapters(chapters, max_chars: int, book_id: str):
     final_chunks = []
     page_number = 1
 
@@ -409,6 +452,7 @@ def split_long_chapters(chapters, max_chars=8000):
 
         if len(text) <= max_chars:
             final_chunks.append({
+                "book_id": book_id,
                 "chapter": ch["chapter"],
                 "part": None,
                 "text": text,
@@ -421,6 +465,7 @@ def split_long_chapters(chapters, max_chars=8000):
 
             for idx, part_text in enumerate(parts):
                 final_chunks.append({
+                    "book_id": book_id,
                     "chapter": ch["chapter"],
                     "part": labels[idx],
                     "text": part_text,
@@ -461,7 +506,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
     else:
         yield f"data: OCR processing stalled. Please try again later.\n\n"
     await asyncio.sleep(0.5)
-    # # Filter chapter headings
+    # Filter chapter headings
     # The logic in this method will differ for each book based on how the chapter no image is encoded
     map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, first_page_num + ocr_page_count, book_id)
 
@@ -494,9 +539,9 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
             full_text += page_text + " "
 
         # Reprocess to split by chapters
-        chapters = split_into_chapters(full_text)
+        chapters = split_into_chapters(full_text, book_id)
         print(f"Total chapters extracted after OCR: {len(chapters)}")
-        final_chapters = split_long_chapters(chapters, 8000)
+        final_chapters = split_long_chapters(chapters, 8000, book_id)
 
     yield f"data: Perform Cleanup\n\n"
     await asyncio.sleep(0.5)
