@@ -108,7 +108,7 @@ async def book_analyzer_events(book_id: str):
                         yield f"data: Text extraction completed for book_id: {book_id}, total characters: {len(full_text)}\n\n"
                         await asyncio.sleep(0.5)
                         # Step 6: Process chapters
-                        final_chapters = process_chapters_from_text(full_text, book_id)
+                        final_chapters = process_chapters_from_text(full_text, book_id, first_page_num)
                         error_msg = None
 
                         yield f"data: Chapter processing completed for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
@@ -399,13 +399,13 @@ def clean_text(page_text):
     return page_text.strip()
 
 
-def process_chapters_from_text(full_text: str, book_id: str):
+def process_chapters_from_text(full_text: str, book_id: str, start_page_num: int):
     """Split text into chapters and handle long chapters."""
     chapters = split_into_chapters(full_text, book_id)
     print(f"Total chapters extracted: {len(chapters)}")
 
     if chapters:
-        return split_long_chapters(chapters, 8000, book_id)
+        return split_long_chapters(chapters, 8000, book_id, start_page_num)
     return []
 
 
@@ -419,10 +419,12 @@ def split_into_chapters(full_text, book_id):
 
     chapters = []
     matches = list(chapter_regex.finditer(full_text))
+    print(f"Matches = {matches}")
     print(f"Total chapter matches found: {len(matches)}")
 
     if not matches:
         matches = list(number_regex.finditer(full_text))
+        print(f"Matches for number regex = {matches}")
         print(f"Total chapter number matches found: {len(matches)}")
 
     for i, match in enumerate(matches):
@@ -432,23 +434,27 @@ def split_into_chapters(full_text, book_id):
         chapter_number = i + 1
         chapter_text = full_text[start:end].strip()
 
-        print(f"Chapter number {chapter_number}")
-        print(f"Chapter text {chapter_text[:20]}")
         chapters.append({
             "book_id": book_id,
             "chapter": chapter_number,
             "text": chapter_text
         })
 
+        for chap in chapters:
+            print(f"chapter no {chap['chapter']}")
+            print(f"chapter text {chap['text'][0:50]} and END = {chap['text'][-50:]}")
+
     return chapters
 
 
-def split_long_chapters(chapters, max_chars: int, book_id: str):
+def split_long_chapters(chapters, max_chars: int, book_id: str, start_page_num: int):
     final_chunks = []
-    page_number = 1
+    page_number = start_page_num
 
     for ch in chapters:
         text = ch["text"]
+        print(f"length of text = {len(text)}")
+        print(f"Start of Text = {text[:50]} and END = {text[-50:]}")
 
         if len(text) <= max_chars:
             final_chunks.append({
@@ -461,9 +467,11 @@ def split_long_chapters(chapters, max_chars: int, book_id: str):
         else:
             # split
             parts = [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
+            print(f"Parts = {parts}")
             labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
             for idx, part_text in enumerate(parts):
+                print(f"idx , part_text = {idx} {part_text[0:50]}")
                 final_chunks.append({
                     "book_id": book_id,
                     "chapter": ch["chapter"],
@@ -508,7 +516,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
     await asyncio.sleep(0.5)
     # Filter chapter headings
     # The logic in this method will differ for each book based on how the chapter no image is encoded
-    map_page_num_page_heading = filter_chapter_headings_for_chapter_beginning(first_page_num, first_page_num + ocr_page_count, book_id)
+    map_page_num_page_heading, chapter_page_range = filter_chapter_headings_for_chapter_beginning(first_page_num, first_page_num + ocr_page_count, book_id)
 
     if not map_page_num_page_heading:
         print("Unable to extract text using OCR.")
@@ -534,14 +542,18 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
             page_text = map_page_num_content[page_no]
             page_prefix = f"Chapter {chapter_no}\n\n"
             page_text = page_prefix + page_text
-            chapter_no += 1
-            page_text = clean_text(page_text)
+            # Iterator through all the pages for the chapter and update full_text for each chapter
+            page_range = chapter_page_range[chapter_no]
+            for page_number in page_range[1:]:
+                page_text += clean_text(map_page_num_content[page_number])
             full_text += page_text + " "
+            chapter_no += 1
 
         # Reprocess to split by chapters
         chapters = split_into_chapters(full_text, book_id)
         print(f"Total chapters extracted after OCR: {len(chapters)}")
-        final_chapters = split_long_chapters(chapters, 8000, book_id)
+        # Pass the first page number to ensure page numbers are captured correctly
+        final_chapters = split_long_chapters(chapters, 8000, book_id, first_page_num)
 
     yield f"data: Perform Cleanup\n\n"
     await asyncio.sleep(0.5)

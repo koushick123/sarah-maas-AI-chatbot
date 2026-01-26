@@ -317,6 +317,7 @@ def delete_chunk_metadata(book_id: str):
     """
     result = collection_book_chunk_metadata.delete_many({"file_id": book_id})
     print(f"Deleted {result.deleted_count} chunk metadata records for book_id: {book_id}")
+    return {"success": True, "deleted_count": result.deleted_count, "book_id": book_id}
 
 
 @app.post("/book/staging/upload")

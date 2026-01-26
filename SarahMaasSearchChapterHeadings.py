@@ -1,6 +1,7 @@
 import re
 from pymongo import MongoClient
 import urllib.parse
+from typing import Dict, List, Tuple
 from SarahMaasChatbotCrescentCity import decrypt_mongo_user, decrypt_mongo_password, decrypt_mongo_hosturl
 
 username = urllib.parse.quote_plus(decrypt_mongo_user())
@@ -24,25 +25,38 @@ def cleanup_text(text: str) -> str:
     return text
     
 
-def filter_chapter_headings_for_chapter_beginning(start, end, book_id) -> dict[int, str]:
+def filter_chapter_headings_for_chapter_beginning(start, end, book_id) -> Tuple[Dict[int, str], Dict[int, List[int]]]:
     page_num_with_chapter_headings = {}
     chapter_page_range = {}
     chapter_no = 1
     page_range = []
+    start_for_last_chapter = -1
     while start < end:
         line = extract_chapter_text_from_db(start, book_id)
         # Pattern: Match empty OR (non-ASCII chars + optional digits/symbols)
         # Exclude any line with ASCII letters
         if check_if_chapter_heading(line):
             page_num_with_chapter_headings[start] = line
+            start_for_last_chapter = start
             print(f"Chapter heading found on page {start}: {line}")
-            chapter_page_range[chapter_no-1] = page_range
-            print(f"Chapter page range = {chapter_page_range}")
+            chapter_page_range[(chapter_no-1)] = page_range.copy()
             chapter_no += 1
             page_range.clear()
         page_range.append(start)
         start += 1
-    return page_num_with_chapter_headings
+
+    # Once the end has been reached proceed until we reach end of the book or chapter.
+    # This is needed to ensure that we capture the end of the chapter for which the heading was identified
+    if page_range:
+        page_range.clear()
+
+    while start_for_last_chapter < end:
+        page_range.append(start_for_last_chapter)
+        start_for_last_chapter += 1
+    chapter_page_range[chapter_no-1] = page_range.copy()
+    print(f"Chapter page range including last chapter = {chapter_page_range}")
+
+    return page_num_with_chapter_headings, chapter_page_range
 
 def check_if_chapter_heading(line: str) -> bool:
     line = cleanup_text(line)
