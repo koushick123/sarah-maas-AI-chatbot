@@ -31,7 +31,7 @@ def filter_chapter_headings_for_chapter_beginning(start, end, book_id) -> Tuple[
     chapter_no = 1
     page_range = []
     start_for_last_chapter = -1
-    while start < end:
+    while start <= end:
         line = extract_chapter_text_from_db(start, book_id)
         # Pattern: Match empty OR (non-ASCII chars + optional digits/symbols)
         # Exclude any line with ASCII letters
@@ -50,11 +50,10 @@ def filter_chapter_headings_for_chapter_beginning(start, end, book_id) -> Tuple[
     if page_range:
         page_range.clear()
 
-    while start_for_last_chapter < end:
+    while start_for_last_chapter <= end:
         page_range.append(start_for_last_chapter)
         start_for_last_chapter += 1
     chapter_page_range[chapter_no-1] = page_range.copy()
-    print(f"Chapter page range including last chapter = {chapter_page_range}")
 
     return page_num_with_chapter_headings, chapter_page_range
 

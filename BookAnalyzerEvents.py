@@ -90,10 +90,8 @@ async def book_analyzer_events(book_id: str):
                     first_page_num, end_page_num = find_first_chapter_page(temp_pdf_path)
                     print(f"First chapter starts on page: {first_page_num}")
                     if first_page_num == -1:
-                        book_data = create_book_metadata(
-                            book_id, end_page_num, first_page_num, [], "",
-                            "No chapter or part found"
-                        )
+                        book_data = create_book_metadata(book_id, end_page_num, first_page_num, [], "",
+                            "No chapter or part found")
                         yield f"data: No chapter or part found in the book  {json.dumps(book_data)}\n\n"
                     else:
                         print(f"📖 Extracting text from page {first_page_num} to {end_page_num}...")
@@ -101,9 +99,7 @@ async def book_analyzer_events(book_id: str):
                         yield f"data: Extracting text from page {first_page_num} to {end_page_num} for book_id: {book_id}\n\n"
                         await asyncio.sleep(0.5)
                         # Step 5: Extract text from pages
-                        full_text, map_page_num_content = extract_text_from_pages(
-                            temp_pdf_path, first_page_num, end_page_num
-                        )
+                        full_text, map_page_num_content = extract_text_from_pages(temp_pdf_path, first_page_num, end_page_num)
 
                         yield f"data: Text extraction completed for book_id: {book_id}, total characters: {len(full_text)}\n\n"
                         await asyncio.sleep(0.5)
@@ -114,12 +110,16 @@ async def book_analyzer_events(book_id: str):
                         yield f"data: Chapter processing completed for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
                         await asyncio.sleep(0.5)
                         # Step 7: If no chapters found, try OCR
+                        print(f"END PAGE NUM = {end_page_num}")
+                        end_page_num = list(map_page_num_content.keys())[-1]
+                        print(f"Updated END PAGE NUM in case of any exclusion = {end_page_num}")
+
+                        page_count = (end_page_num - first_page_num)
                         if not final_chapters:
                             print("No chapters found. Attempting OCR processing...")
                             yield f"data: No chapters found. Attempting OCR processing..\n\n"
                             await asyncio.sleep(0.5)
-                            page_count = (end_page_num-first_page_num)
-                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, 20)
+                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, 60)
                             
                             # Process the async generator and forward progress updates
                             final_chapters = None
@@ -134,7 +134,7 @@ async def book_analyzer_events(book_id: str):
                             if final_chapters:
                                 # Step 8: Create and return metadata
                                 yield f"data: OCR processing succeeded for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
-                                book_doc = create_book_metadata(book_id, (end_page_num-first_page_num), first_page_num, final_chapters, full_text, error_msg)
+                                book_doc = create_book_metadata(book_id, page_count, first_page_num, final_chapters, full_text, error_msg)
                                 print("Book metadata: ", book_doc)
 
                                 if not book_doc["success"]:
@@ -154,7 +154,7 @@ async def book_analyzer_events(book_id: str):
                                 yield f"data: OCR processing failed for book_id: {book_id}. {error_msg}\n\n"
                         else:
                             book_doc = create_book_metadata(
-                                book_id, (end_page_num-first_page_num), first_page_num,
+                                book_id, page_count, first_page_num,
                                 final_chapters, full_text
                             )
                             number_of_chunks = book_doc["total_chunks"]
@@ -367,7 +367,7 @@ def save_book_chunks(chapter_data: dict):
 
 
 def extract_text_from_pages(pdf_path: str, first_page_num: int, page_count: int):
-    """Extract and clean text from specified page range."""
+    """Extract and clean text from specified page range, excluding non-chapter pages."""
     with open(pdf_path, "rb") as pdf_document:
         full_text = ""
         map_page_num_content = {}
@@ -377,10 +377,79 @@ def extract_text_from_pages(pdf_path: str, first_page_num: int, page_count: int)
         for page_num in range(first_page_num, page_count):
             page = page_list[page_num - 1]
             page_content = clean_text(page.extract_text())
+            
+            # Skip pages that contain non-chapter content
+            if should_exclude_page(page_content):
+                print(f"Excluding page {page_num}: {page_content[:50]}...")
+                return full_text, map_page_num_content
+                
             full_text += page_content + " "
             map_page_num_content[page_num] = page_content
 
         return full_text, map_page_num_content
+
+
+def should_exclude_page(page_text: str) -> bool:
+    """Check if a page should be excluded based on common non-chapter content."""
+    if not page_text or not page_text.strip():
+        return True
+    
+    # Convert to lowercase for case-insensitive matching
+    text_lower = page_text.lower().strip()
+    
+    # List of exact phrases that indicate non-chapter content
+    exclude_patterns = [
+        'acknowledgments',
+        'acknowledgment',
+        'prologue',
+        'foreword',
+        'preface',
+        'introduction',
+        'contents',
+        'table of contents',
+        'index',
+        'bibliography',
+        'appendix',
+        'glossary',
+        'about the author',
+        'copyright',
+        'title page',
+        'dedication',
+        'the end',
+        'credits',
+        'thanks',
+        'references',
+        'further reading',
+        'about the book',
+        'other books by',
+        'also by',
+        'praise for',
+        'reviews'
+    ]
+    
+    # Check for exact matches of the exclude patterns
+    for pattern in exclude_patterns:
+        # Check if the exact phrase appears as a standalone line or at the beginning
+        if (text_lower == pattern or 
+            text_lower.startswith(pattern + '\n') or 
+            text_lower.startswith(pattern + ' ') or
+            text_lower.endswith('\n' + pattern) or
+            text_lower.endswith(' ' + pattern) or
+            '\n' + pattern + '\n' in text_lower or
+            '\n' + pattern + ' ' in text_lower or
+            ' ' + pattern + '\n' in text_lower):
+            return True
+    
+    # Additional checks for common indicators
+    # Check if page is mostly numbers (like page numbers only)
+    if re.match(r'^\s*\d+\s*$', page_text.strip()):
+        return True
+        
+    # Check if page is very short (likely a title page or separator)
+    if len(page_text.strip()) < 10:
+        return True
+        
+    return False
 
 
 def clean_text(page_text):
@@ -409,7 +478,7 @@ def process_chapters_from_text(full_text: str, book_id: str, start_page_num: int
     return []
 
 
-def split_into_chapters(full_text, book_id):
+def split_into_chapters(full_text, book_id, chapter_page_range=None):
     chapter_regex = re.compile(
         r"chapter[\n\r]?[\s]*[\d]*",
         re.MULTILINE | re.IGNORECASE
@@ -433,16 +502,20 @@ def split_into_chapters(full_text, book_id):
 
         chapter_number = i + 1
         chapter_text = full_text[start:end].strip()
+        
+        # Get page range for this chapter if available
+        pages = None
+        if chapter_page_range and chapter_number in chapter_page_range:
+            page_list = chapter_page_range[chapter_number]
+            if page_list:
+                pages = f"{min(page_list)}-{max(page_list)}"
 
         chapters.append({
             "book_id": book_id,
             "chapter": chapter_number,
-            "text": chapter_text
+            "text": chapter_text,
+            "pages": pages
         })
-
-        for chap in chapters:
-            print(f"chapter no {chap['chapter']}")
-            print(f"chapter text {chap['text'][0:50]} and END = {chap['text'][-50:]}")
 
     return chapters
 
@@ -455,6 +528,9 @@ def split_long_chapters(chapters, max_chars: int, book_id: str, start_page_num: 
         text = ch["text"]
         print(f"length of text = {len(text)}")
         print(f"Start of Text = {text[:50]} and END = {text[-50:]}")
+        
+        # Get pages from the chapter data
+        pages = ch.get("pages")
 
         if len(text) <= max_chars:
             final_chunks.append({
@@ -462,22 +538,20 @@ def split_long_chapters(chapters, max_chars: int, book_id: str, start_page_num: 
                 "chapter": ch["chapter"],
                 "part": None,
                 "text": text,
-                "page_number": page_number
+                "pages": pages
             })
         else:
             # split
             parts = [text[i:i + max_chars] for i in range(0, len(text), max_chars)]
-            print(f"Parts = {parts}")
             labels = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
             for idx, part_text in enumerate(parts):
-                print(f"idx , part_text = {idx} {part_text[0:50]}")
                 final_chunks.append({
                     "book_id": book_id,
                     "chapter": ch["chapter"],
                     "part": labels[idx],
                     "text": part_text,
-                    "page_number": page_number
+                    "pages": pages
                 })
                 if idx < len(parts) - 1:
                     page_number += 1
@@ -550,7 +624,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
             chapter_no += 1
 
         # Reprocess to split by chapters
-        chapters = split_into_chapters(full_text, book_id)
+        chapters = split_into_chapters(full_text, book_id, chapter_page_range)
         print(f"Total chapters extracted after OCR: {len(chapters)}")
         # Pass the first page number to ensure page numbers are captured correctly
         final_chapters = split_long_chapters(chapters, 8000, book_id, first_page_num)
