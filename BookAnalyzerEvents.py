@@ -119,7 +119,7 @@ async def book_analyzer_events(book_id: str):
                             print("No chapters found. Attempting OCR processing...")
                             yield f"data: No chapters found. Attempting OCR processing..\n\n"
                             await asyncio.sleep(0.5)
-                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, 60)
+                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, page_count)
                             
                             # Process the async generator and forward progress updates
                             final_chapters = None
@@ -136,29 +136,12 @@ async def book_analyzer_events(book_id: str):
                                 yield f"data: OCR processing succeeded for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
                                 book_doc = create_book_metadata(book_id, page_count, first_page_num, final_chapters, full_text, error_msg)
                                 print("Book metadata: ", book_doc)
-
-                                if not book_doc["success"]:
-                                    print("Error in processing book chunks: ", book_doc.get("error", "Unknown error"))
-                                    yield f"data: Error in chunking process: {json.dumps(book_doc)}\n\n"
-                                else:
-                                    number_of_chunks = book_doc["total_chunks"]
-                                    yield f"data: Chunking completed. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
-                                    book_doc["book_id"] = book_id
-                                    save_result = save_book_metadata_and_chunks(book_doc, final_chapters)
-                                    
-                                    if save_result["success"]:
-                                        yield f"Book Metadata and Chunks Saved for {book_id}\n\n"
-                                    else:
-                                        yield f"Error saving book data for {book_id}: {save_result['error']}\n\n"
+                                save_book_metadata_chunks(book_doc, book_id, final_chapters)
                             else:
                                 yield f"data: OCR processing failed for book_id: {book_id}. {error_msg}\n\n"
                         else:
-                            book_doc = create_book_metadata(
-                                book_id, page_count, first_page_num,
-                                final_chapters, full_text
-                            )
-                            number_of_chunks = book_doc["total_chunks"]
-                            yield f"data: Chunking completed. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
+                            book_doc = create_book_metadata(book_id, page_count, first_page_num,final_chapters, full_text)
+                            save_book_metadata_chunks(book_doc, book_id, final_chapters)
             else:
                 number_of_chunks = 0
                 print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
@@ -177,6 +160,22 @@ async def book_analyzer_events(book_id: str):
         # Clean up temporary file
         if temp_pdf_path and os.path.exists(temp_pdf_path):
             os.unlink(temp_pdf_path)
+
+
+async def save_book_metadata_chunks(book_doc: dict, book_id: str, final_chapters: list[dict]):
+    if not book_doc["success"]:
+        print("Error in processing book chunks: ", book_doc.get("error", "Unknown error"))
+        yield f"data: Error in chunking process: {json.dumps(book_doc)}\n\n"
+    else:
+        number_of_chunks = book_doc["total_chunks"]
+        yield f"data: Chunking completed. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
+        book_doc["book_id"] = book_id
+        save_result = save_book_metadata_and_chunks(book_doc, final_chapters)
+
+        if save_result["success"]:
+            yield f"Book Metadata and Chunks Saved for {book_id}\n\n"
+        else:
+            yield f"Error saving book data for {book_id}: {save_result['error']}\n\n"
 
 
 def check_existing_chunks(book_id: str):
@@ -568,10 +567,6 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
     await asyncio.sleep(0.5)
     convert_pages_to_images(pdf_path, book_id, page_nums, ocr_page_count)
 
-    # Extract text from OCR
-    # end_page_num = first_page_num + ocr_page_count
-    # publish_book_events_for_OCR(book_id, first_page_num, end_page_num)
-    
     items_processed = False
     
     # Process the async generator and forward progress updates
@@ -705,6 +700,7 @@ def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pa
     os.makedirs(file_path_prefix, exist_ok=True)
 
     count = 0
+
     for page_num in page_nums:
         if count >= max_pages:
             break
@@ -729,22 +725,3 @@ def convert_pages_to_images(pdf_path: str, book_id: str, page_nums: list, max_pa
 
     pdf_doc.close()
     return count
-
-
-def publish_book_events_for_OCR(book_id: str, start_page, end_page_num: int):
-    """Publish book events for OCR processing."""
-    try:
-        page_index = start_page
-        print("Starting to send messages...")
-        while page_index < end_page_num:
-            if sm_map_page_nos_chap_heading_collection.find_one({"page_num": page_index}):
-                print(f"Page {page_index} found in database, skipping...")
-                page_index += 1
-                continue  # Skip pages already in the database
-            image_path = f"page_{book_id}_{page_index}.jpg"
-            print(f"Sending message for page {page_index} with image path {image_path}")
-            producer.send(topic, {"book_id": book_id, "page_num": page_index, "image_path": image_path})
-            page_index += 1
-        
-    except Exception as e:
-        print(f"Error: {str(e)}")
