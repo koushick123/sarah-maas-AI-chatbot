@@ -525,8 +525,6 @@ def split_long_chapters(chapters, max_chars: int, book_id: str, start_page_num: 
 
     for ch in chapters:
         text = ch["text"]
-        print(f"length of text = {len(text)}")
-        print(f"Start of Text = {text[:50]} and END = {text[-50:]}")
         
         # Get pages from the chapter data
         pages = ch.get("pages")
