@@ -31,6 +31,7 @@ producer = KafkaProducer(
     value_serializer=lambda v: json.dumps(v).encode('utf-8')
 )
 
+STREAMING_INTERVAL = 0.1
 topic = 'mytopic'
 
 # from SarahMaasAzureOCR import extract_and_save_text_from_ocr_page
@@ -40,30 +41,30 @@ from SarahMaasChatbotCrescentCity import collection_book_chunk_metadata, collect
 
 async def book_analyzer_events(book_id: str):
     yield f"data: Starting analysis for book_id: {book_id}\n\n"
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(STREAMING_INTERVAL)
     # Check if chunk metadata exists
     yield f"data: Checking chunk metadata for book_id: {book_id}\n\n"
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(STREAMING_INTERVAL)
 
     temp_pdf_path = ""
     try:
         book_doc = collection_book_chunk_metadata.find_one({"file_id": book_id})
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(STREAMING_INTERVAL)
         if book_doc:
             number_of_chunks = book_doc["total_chunks"]
             yield f"data: Chunk metadata found. Total chunks: {number_of_chunks} for book_id: {book_id}\n\n"
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(STREAMING_INTERVAL)
         else:
             yield f"data: Chunk metadata not found for book_id: {book_id}. Checking staging record...\n\n"
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(STREAMING_INTERVAL)
             print("Book metadata not found for book_id: ", book_id)
             print("Check for staging record for the book_id: ", book_id)
             staging_doc = collection_book_staging.find_one({"book_id": book_id})
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(STREAMING_INTERVAL)
             if staging_doc:
                 print("Staging record found, now start chunking...")
                 yield f"data: Staging record found. Starting chunking process for book_id: {book_id}\n\n"
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(STREAMING_INTERVAL)
                 print(f"🔧 TOOL CALLED: get_book_chunks with book_id={book_id}")
 
                 # Step 1: Check if chunks already exist
@@ -72,20 +73,20 @@ async def book_analyzer_events(book_id: str):
                     existing_chunks["success"] = True
                     yield f"data: Existing chunks check completed for book_id: {book_id} and found {len(existing_chunks)} chunks\n\n"
                     yield f"data: {json.dumps(existing_chunks)}\n\n"
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(STREAMING_INTERVAL)
                 else:
                     yield f"data: No chunks found for book_id: {book_id}. Preparing to chunk the book.\n\n"
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(STREAMING_INTERVAL)
                     # Step 2: Fetch PDF from GridFS
                     pdf_binary = fetch_pdf_from_gridfs(book_id)
 
                     yield f"data: PDF fetched from GridFS for book_id: {book_id}, size: {len(pdf_binary)} bytes\n\n"
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(STREAMING_INTERVAL)
                     # Step 3: Create temporary PDF file
                     temp_pdf_path = create_temp_pdf(pdf_binary)
 
                     yield f"data: Temporary PDF created at {temp_pdf_path} for book_id: {book_id}\n\n"
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(STREAMING_INTERVAL)
                     # Step 4: Find first chapter page
                     first_page_num, end_page_num = find_first_chapter_page(temp_pdf_path)
                     print(f"First chapter starts on page: {first_page_num}")
@@ -97,18 +98,18 @@ async def book_analyzer_events(book_id: str):
                         print(f"📖 Extracting text from page {first_page_num} to {end_page_num}...")
 
                         yield f"data: Extracting text from page {first_page_num} to {end_page_num} for book_id: {book_id}\n\n"
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(STREAMING_INTERVAL)
                         # Step 5: Extract text from pages
                         full_text, map_page_num_content = extract_text_from_pages(temp_pdf_path, first_page_num, end_page_num)
 
                         yield f"data: Text extraction completed for book_id: {book_id}, total characters: {len(full_text)}\n\n"
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(STREAMING_INTERVAL)
                         # Step 6: Process chapters
                         final_chapters = process_chapters_from_text(full_text, book_id, first_page_num)
                         error_msg = None
 
                         yield f"data: Chapter processing completed for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(STREAMING_INTERVAL)
                         # Step 7: If no chapters found, try OCR
                         print(f"END PAGE NUM = {end_page_num}")
                         end_page_num = list(map_page_num_content.keys())[-1]
@@ -118,9 +119,9 @@ async def book_analyzer_events(book_id: str):
                         if not final_chapters:
                             print("No chapters found. Attempting OCR processing...")
                             yield f"data: No chapters found. Attempting OCR processing..\n\n"
-                            await asyncio.sleep(0.5)
-                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, page_count)
-                            
+                            await asyncio.sleep(STREAMING_INTERVAL)
+                            ocr_generator = process_with_ocr(temp_pdf_path, book_id, first_page_num, map_page_num_content, 300)
+
                             # Process the async generator and forward progress updates
                             final_chapters = None
                             async for update in ocr_generator:
@@ -133,15 +134,19 @@ async def book_analyzer_events(book_id: str):
 
                             if final_chapters:
                                 # Step 8: Create and return metadata
-                                yield f"data: OCR processing succeeded for book_id: {book_id}, total chapters: {len(final_chapters)}\n\n"
+                                yield f"data: OCR processing succeeded for book_id: {book_id}, total chapters (split into 8K chunks): {len(final_chapters)}\n\n"
                                 book_doc = create_book_metadata(book_id, page_count, first_page_num, final_chapters, full_text, error_msg)
                                 print("Book metadata: ", book_doc)
-                                save_book_metadata_chunks(book_doc, book_id, final_chapters)
+                                await asyncio.sleep(STREAMING_INTERVAL)
+                                async for message in save_book_metadata_chunks(book_doc, book_id, final_chapters):
+                                    yield message
                             else:
                                 yield f"data: OCR processing failed for book_id: {book_id}. {error_msg}\n\n"
                         else:
                             book_doc = create_book_metadata(book_id, page_count, first_page_num,final_chapters, full_text)
-                            save_book_metadata_chunks(book_doc, book_id, final_chapters)
+                            await asyncio.sleep(STREAMING_INTERVAL)
+                            async for message in save_book_metadata_chunks(book_doc, book_id, final_chapters):
+                                yield message
             else:
                 number_of_chunks = 0
                 print(f"Chunk count for book_id {book_id} is {number_of_chunks}")
@@ -163,6 +168,8 @@ async def book_analyzer_events(book_id: str):
 
 
 async def save_book_metadata_chunks(book_doc: dict, book_id: str, final_chapters: list[dict]):
+    print("book doc success ==> ")
+    print(book_doc["success"])
     if not book_doc["success"]:
         print("Error in processing book chunks: ", book_doc.get("error", "Unknown error"))
         yield f"data: Error in chunking process: {json.dumps(book_doc)}\n\n"
@@ -173,9 +180,9 @@ async def save_book_metadata_chunks(book_doc: dict, book_id: str, final_chapters
         save_result = save_book_metadata_and_chunks(book_doc, final_chapters)
 
         if save_result["success"]:
-            yield f"Book Metadata and Chunks Saved for {book_id}\n\n"
+            yield f"data: Book Metadata and Chunks Saved for {book_id}\n\n"
         else:
-            yield f"Error saving book data for {book_id}: {save_result['error']}\n\n"
+            yield f"data: Error saving book data for {book_id}: {save_result['error']}\n\n"
 
 
 def check_existing_chunks(book_id: str):
@@ -318,7 +325,7 @@ def save_book_metadata_and_chunks(book_metadata: dict, chapter_data: dict):
                 # Delete existing metadata and chunks for this book_id
                 print(f"Book metadata = {book_metadata}")
                 book_id = book_metadata["book_id"]
-                
+
                 # Remove existing metadata
                 if book_chunk_metadata_collection.find_one({"file_id": book_id}, session=session):
                     book_chunk_metadata_collection.delete_one({"file_id": book_id}, session=session)
@@ -333,7 +340,7 @@ def save_book_metadata_and_chunks(book_metadata: dict, chapter_data: dict):
                 print(f"Book metadata inserted")
                 chunks_result = book_chunk_collection.insert_many(chapter_data, session=session)
                 print(f"Book chunks inserted")
-                
+
                 return {
                     "metadata_id": metadata_result.inserted_id,
                     "chunks_id": chunks_result.inserted_ids,
@@ -376,12 +383,12 @@ def extract_text_from_pages(pdf_path: str, first_page_num: int, page_count: int)
         for page_num in range(first_page_num, page_count):
             page = page_list[page_num - 1]
             page_content = clean_text(page.extract_text())
-            
+
             # Skip pages that contain non-chapter content
             if should_exclude_page(page_content):
                 print(f"Excluding page {page_num}: {page_content[:50]}...")
                 return full_text, map_page_num_content
-                
+
             full_text += page_content + " "
             map_page_num_content[page_num] = page_content
 
@@ -392,10 +399,10 @@ def should_exclude_page(page_text: str) -> bool:
     """Check if a page should be excluded based on common non-chapter content."""
     if not page_text or not page_text.strip():
         return True
-    
+
     # Convert to lowercase for case-insensitive matching
     text_lower = page_text.lower().strip()
-    
+
     # List of exact phrases that indicate non-chapter content
     exclude_patterns = [
         'acknowledgments',
@@ -425,12 +432,12 @@ def should_exclude_page(page_text: str) -> bool:
         'praise for',
         'reviews'
     ]
-    
+
     # Check for exact matches of the exclude patterns
     for pattern in exclude_patterns:
         # Check if the exact phrase appears as a standalone line or at the beginning
-        if (text_lower == pattern or 
-            text_lower.startswith(pattern + '\n') or 
+        if (text_lower == pattern or
+            text_lower.startswith(pattern + '\n') or
             text_lower.startswith(pattern + ' ') or
             text_lower.endswith('\n' + pattern) or
             text_lower.endswith(' ' + pattern) or
@@ -438,16 +445,16 @@ def should_exclude_page(page_text: str) -> bool:
             '\n' + pattern + ' ' in text_lower or
             ' ' + pattern + '\n' in text_lower):
             return True
-    
+
     # Additional checks for common indicators
     # Check if page is mostly numbers (like page numbers only)
     if re.match(r'^\s*\d+\s*$', page_text.strip()):
         return True
-        
+
     # Check if page is very short (likely a title page or separator)
     if len(page_text.strip()) < 10:
         return True
-        
+
     return False
 
 
@@ -501,7 +508,7 @@ def split_into_chapters(full_text, book_id, chapter_page_range=None):
 
         chapter_number = i + 1
         chapter_text = full_text[start:end].strip()
-        
+
         # Get page range for this chapter if available
         pages = None
         if chapter_page_range and chapter_number in chapter_page_range:
@@ -525,7 +532,7 @@ def split_long_chapters(chapters, max_chars: int, book_id: str, start_page_num: 
 
     for ch in chapters:
         text = ch["text"]
-        
+
         # Get pages from the chapter data
         pages = ch.get("pages")
 
@@ -562,7 +569,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
     # Convert pages to images
     page_nums = list(map_page_num_content.keys())[:ocr_page_count]
     yield f"data: Converting pages to images for book_id: {book_id}, page count: {ocr_page_count}\n\n"
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(STREAMING_INTERVAL)
     convert_pages_to_images(pdf_path, book_id, page_nums, ocr_page_count)
 
     items_processed = False
@@ -580,7 +587,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
         yield f"data: OCR processing completed for book_id: {book_id}. Scanning completed for {ocr_page_count} pages. Extracting chapter headings...\n\n"
     else:
         yield f"data: OCR processing stalled. Please try again later.\n\n"
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(STREAMING_INTERVAL)
     # Filter chapter headings
     # The logic in this method will differ for each book based on how the chapter no image is encoded
     map_page_num_page_heading, chapter_page_range = filter_chapter_headings_for_chapter_beginning(first_page_num, first_page_num + ocr_page_count, book_id)
@@ -588,7 +595,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
     if not map_page_num_page_heading:
         print("Unable to extract text using OCR.")
         yield f"data: Unable to extract text using OCR.\n\n"
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(STREAMING_INTERVAL)
 
     # # Get non-blank chapter headings
     map_page_num_chapter_heading = {
@@ -600,7 +607,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
     if not map_page_num_chapter_heading:
         print("Chapter headings are blank. Unable to proceed.")
         yield f"data: Chapter headings are blank. Unable to proceed.\n\n"
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(STREAMING_INTERVAL)
     else:
         # Add chapter prefixes
         chapter_no = 1
@@ -623,7 +630,7 @@ async def process_with_ocr(pdf_path: str, book_id: str, first_page_num: int, map
         final_chapters = split_long_chapters(chapters, 8000, book_id, first_page_num)
 
     yield f"data: Perform Cleanup\n\n"
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(STREAMING_INTERVAL)
     # Clean up
     cleanup_ocr_files(book_id)
     if final_chapters:
@@ -643,7 +650,7 @@ async def check_ocr_processed_pages(book_id: str, page_nums: [], ocr_page_count:
         if processed_count >= ocr_page_count:
             print("All OCR pages processed.")
             yield f"data: All OCR pages processed.\n\n"
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(STREAMING_INTERVAL)
             break
         yield f"data: Scanned and analyzed {processed_count} pages so far...\n\n"
         print(f"Scanning pages to analyze...{processed_count} scanned so far.")
@@ -669,7 +676,7 @@ async def check_ocr_processed_pages(book_id: str, page_nums: [], ocr_page_count:
             if exponential_backoff_count >= 4:
                 print("Maximum exponential backoff reached (4 doublings), breaking to avoid infinite loop.")
                 yield f"data: Maximum exponential backoff reached (4 doublings), breaking to avoid infinite loop.\n\n"
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(STREAMING_INTERVAL)
                 break
             print(f"No progress in OCR processing, applying exponential backoff (level {exponential_backoff_count}).")
         else:
