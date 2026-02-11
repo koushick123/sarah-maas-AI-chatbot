@@ -1,0 +1,40 @@
+1. Automated Character Extraction + Roles + Character Arcs
+
+	From the uploaded book, your system:
+
+	Identifies all characters
+
+	Classifies roles (protagonist, antagonist, supporting, unknown → later refined)
+
+	Extracts chapter-level behavioral and emotional arc points
+
+	Merges across chapters to produce:
+
+	Character descriptions
+
+	Evolution summaries
+
+	Chapter appearance tracking
+
+	Outcome: Structured character intelligence for the whole book.
+
+2. Chapter-by-Chapter Summary Engine
+
+	For each chapter, your system generates:
+
+	Concise summary
+
+	Key events
+
+	Themes
+
+	Important quotes
+
+	Characters involved (optional linkage with Feature 1)
+
+	Outcome: Structured chapter understanding + fast book comprehension.
+
+Together they provide:
+
+WHO drives the story (characters + arcs)
+WHAT happens in the story (chapter events + themes)
