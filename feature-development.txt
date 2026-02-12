@@ -1,3 +1,8 @@
+Need to develop below features with multipe LLMs and prepare a comparison chart/dashboard.
+This will be a potential differentiator.
+
+This will be a initial MVP. This will be enhanced to include more unique features post discussions.
+
 1. Automated Character Extraction + Roles + Character Arcs
 
 	From the uploaded book, your system:
